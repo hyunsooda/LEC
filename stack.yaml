@@ -1,0 +1,12 @@
+#resolver: lts-17.12
+resolver: snapshot.yaml
+
+packages:
+- '.'
+
+flags:
+  llvm-hs:
+    shared-llvm: false
+
+ghc-options:
+  llvm-hs: -optcxx=-std=c++14 -optcxx=-lstdc++ -optcxx=-fno-rtti

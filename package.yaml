@@ -1,0 +1,32 @@
+name:                LEC
+version:             1.0.0
+github:              "hyunsooda/LEC"
+license:             BSD3
+author:              "Hyunsoo Shin"
+maintainer:          "hyunsooda@kaist.ac.kr"
+copyright:           "2023 Hyunsoo Shin"
+
+extra-source-files:
+- README.md
+
+synopsis:            LLVM-Based Extended Compiler for Security Improvement
+category:            Compilers
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/hyunsooda/LEC>
+
+executables:
+  lec:
+    main:                Main.hs
+    source-dirs:         app
+    dependencies:
+    - base >= 4.7 && < 5
+    - mtl
+    - bytestring
+    - containers
+    - ansi-terminal
+    - placeholders
+    - llvm-hs       >= 15
+    - llvm-hs-pure  >= 15
