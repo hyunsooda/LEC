@@ -3,7 +3,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Main where
 
 import Prelude hiding (readFile, writeFile)
@@ -15,37 +14,37 @@ import Data.Word (Word16, Word32)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
+import System.Console.ANSI
 
-import LLVM.AST as IR
-import LLVM.AST.Name as IR
-import LLVM.AST.Type as IR
-import LLVM.AST.Global as G
-import LLVM.AST.Constant as C
-import LLVM.AST.Instruction as IR
+import qualified LLVM.AST as AST
+import qualified LLVM.AST.Name as AST
+import qualified LLVM.AST.Type as AST
+import qualified LLVM.AST.CallingConvention as AST
+import qualified LLVM.AST.AddrSpace as AST
+import qualified LLVM.AST.IntegerPredicate as AST
+import qualified LLVM.AST.Operand as AST hiding (PointerType)
+
+import qualified LLVM.AST.Global as G
+import qualified LLVM.AST.Constant as C
+
 import LLVM.Internal.Context as LLVM
 import LLVM.Internal.Module as LLVM
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
-import LLVM.AST.CallingConvention as CC
-import LLVM.AST.AddrSpace as IR
-import System.Console.ANSI
-import qualified LLVM.AST.IntegerPredicate     as IP
-import qualified LLVM.AST.Operand as OP
-
-data StateMap = StateMap { intMap :: M.Map Name Integer
-                         , debugMap :: M.Map MetadataNodeID MDNode
-                         , sourceMap :: M.Map Name OP.DIVariable
+data StateMap = StateMap { intMap :: M.Map AST.Name Integer
+                         , debugMap :: M.Map AST.MetadataNodeID AST.MDNode
+                         , sourceMap :: M.Map AST.Name AST.DIVariable
                          } deriving Show
 
 type HaskellPassInput = [String]
 type HaskellPassState = StateMap
 type HaskellPassOutput = [String]
 type Env = (RWST HaskellPassInput HaskellPassOutput HaskellPassState ModuleBuilder)
-type HaskellPass a = IR.Module -> IRBuilderT Env a
+type HaskellPass a = AST.Module -> IRBuilderT Env a
 
-runHaskellPass :: (HaskellPass a) -> HaskellPassInput -> IR.Module -> IO (IR.Module, a)
+runHaskellPass :: (HaskellPass a) -> HaskellPassInput -> AST.Module -> IO (AST.Module, a)
 runHaskellPass pass input mod = do
   let haskellPassState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty }
   let irBuilderState = LLVM.emptyIRBuilder
@@ -55,62 +54,62 @@ runHaskellPass pass input mod = do
                                 runIRBuilderT irBuilderState $ pass mod
 
   mapM_ (\log -> if isPrefixOf "ERROR: " log then printErr log else putStrLn log) output
-  return (mod { IR.moduleDefinitions = (defProver:defs) }, result)
+  return (mod { AST.moduleDefinitions = (defProver:defs) }, result)
 
 
-getOperandName :: Operand -> Maybe Name
-getOperandName (LocalReference _ varName) = Just varName
-getOperandName (ConstantOperand (C.GlobalReference varName)) = Just varName
+getOperandName :: AST.Operand -> Maybe AST.Name
+getOperandName (AST.LocalReference _ varName) = Just varName
+getOperandName (AST.ConstantOperand (C.GlobalReference varName)) = Just varName
 getOperandName _ = Nothing
 
-getLocalOperandName :: Operand -> Name
-getLocalOperandName (LocalReference _ varName) = varName
+getLocalOperandName :: AST.Operand -> AST.Name
+getLocalOperandName (AST.LocalReference _ varName) = varName
 
-constantToInt :: IR.Operand -> Integer
-constantToInt (ConstantOperand (C.Int {..})) = integerValue
+constantToInt :: AST.Operand -> Integer
+constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
 
-makeInt32Operand :: Integer -> IR.Operand
-makeInt32Operand n = ConstantOperand (C.Int 32 n)
+makeInt32Operand :: Integer -> AST.Operand
+makeInt32Operand n = AST.ConstantOperand (C.Int 32 n)
 
-getFuncName :: CallableOperand -> Maybe String
+getFuncName :: AST.CallableOperand -> Maybe String
 getFuncName =
   \case
-    Right (ConstantOperand (C.GlobalReference (Name funcName))) -> Just . show $ funcName
+    Right (AST.ConstantOperand (C.GlobalReference (AST.Name funcName))) -> Just . show $ funcName
     _ -> Nothing
 
-getMDNodeID :: MDRef a -> MetadataNodeID
-getMDNodeID (MDRef id) = id
+getMDNodeID :: AST.MDRef a -> AST.MetadataNodeID
+getMDNodeID (AST.MDRef id) = id
 getMDNodeID _ = undefined
 
-getMDLocation :: MDNode -> (Word32, Word16, MDRef OP.DILocalScope)
-getMDLocation (DILocation (OP.Location {..})) = (line, column, scope)
+getMDLocation :: AST.MDNode -> (Word32, Word16, AST.MDRef AST.DILocalScope)
+getMDLocation (AST.DILocation (AST.Location {..})) = (line, column, scope)
 
-getMD :: MonadState StateMap m => MDRef a -> m MDNode
+getMD :: MonadState StateMap m => AST.MDRef a -> m AST.MDNode
 getMD mdRef = do
   md <- gets debugMap
   pure $ (M.!) md $ getMDNodeID mdRef
 
-getVarName :: (Operand, a) -> Name
-getVarName (MetadataOperand (MDValue (LocalReference _ varName)), _) = varName
+getVarName :: (AST.Operand, a) -> AST.Name
+getVarName (AST.MetadataOperand (AST.MDValue (AST.LocalReference _ varName)), _) = varName
 getVarName _ = undefined
 
-getVarInfo :: MonadState StateMap m => (Operand, a) -> m OP.DINode
-getVarInfo (MetadataOperand (MDNode mdRef), _) = do
+getVarInfo :: MonadState StateMap m => (AST.Operand, a) -> m AST.DINode
+getVarInfo (AST.MetadataOperand (AST.MDNode mdRef), _) = do
   md <- getMD mdRef
   pure $ diVar md
-    where diVar (DINode var) = var
+    where diVar (AST.DINode var) = var
 
-addVarInfo :: MonadState StateMap m => Name -> OP.DINode -> m ()
-addVarInfo name (OP.DIVariable var) = do
+addVarInfo :: MonadState StateMap m => AST.Name -> AST.DINode -> m ()
+addVarInfo name (AST.DIVariable var) = do
   modify $ \sm -> sm { sourceMap = M.insert name var (sourceMap sm) }
 
-getMDFuncFileNames :: MonadState StateMap m => MDNode -> m (String, String)
-getMDFuncFileNames (DINode (OP.DIScope (OP.DILocalScope (OP.DISubprogram (OP.Subprogram {..}))))) = do
+getMDFuncFileNames :: MonadState StateMap m => AST.MDNode -> m (String, String)
+getMDFuncFileNames (AST.DINode (AST.DIScope (AST.DILocalScope (AST.DISubprogram (AST.Subprogram {..}))))) = do
   fileName' <- getFileName file
   pure (fileName', funcName)
     where funcName = show name
 
-getMDScope [(_, MDRef id)] = do
+getMDScope [(_, AST.MDRef id)] = do
   md <- gets debugMap
   let (line, col, mdRef) = getMDLocation $ (M.!) md id
       mdScope = (M.!) md $ getMDNodeID mdRef
@@ -118,30 +117,30 @@ getMDScope [(_, MDRef id)] = do
    (fileName, funcName) <- getMDFuncFileNames mdScope
    pure (fileName, funcName, fromIntegral line, fromIntegral col)
 
-typeSize :: Type -> Either String Int
+typeSize :: AST.Type -> Either String Int
 typeSize typ = case typ of
-  IR.IntegerType {..} -> Right $ fromIntegral typeBits
+  AST.IntegerType {..} -> Right $ fromIntegral typeBits
   _ -> Left $ "Unimplemented type: " ++ show typ
 
 printErr :: String -> IO ()
 printErr err =
   setSGR [SetColor Foreground Vivid Red] >> print err >> setSGR [Reset]
 
-voidRetTyp :: Type
-voidRetTyp = (FunctionType IR.void [] False)
+voidRetTyp :: AST.Type
+voidRetTyp = (AST.FunctionType AST.void [] False)
 
-libcExit :: IR.Operand
-libcExit = ConstantOperand (C.GlobalReference (Name "exit"))
+libcExit :: AST.Operand
+libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
 
-libcPrintf :: IR.Operand
-libcPrintf = ConstantOperand (C.GlobalReference (Name "printf"))
+libcPrintf :: AST.Operand
+libcPrintf = AST.ConstantOperand (C.GlobalReference (AST.Name "printf"))
 
-getFileName :: MonadState StateMap m => Maybe (MDRef a) -> m String
+getFileName :: MonadState StateMap m => Maybe (AST.MDRef a) -> m String
 getFileName (Just mdRef) = do
   md <- getMD mdRef
   pure $ fileName md
   where
-    fileName (OP.DINode (OP.DIScope (OP.DIFile (OP.File {..})))) = show filename
+    fileName (AST.DINode (AST.DIScope (AST.DIFile (AST.File {..})))) = show filename
 getFileName _ = undefined
 
 getVarSource :: (MonadState StateMap m, Num c) => p -> m (String, String, c)
@@ -154,12 +153,12 @@ getVarSource targetVarName = do
       source = (M.!) sourceInfo toBeFixed in
       getSourceInfo source
   where
-    getSourceInfo (OP.DILocalVariable (OP.LocalVariable {..})) = do
+    getSourceInfo (AST.DILocalVariable (AST.LocalVariable {..})) = do
       fileName' <- getFileName file
       pure $ (show name, fileName', fromIntegral line)
 
-isDbgInstr :: MonadState StateMap m => Named Instruction -> m Bool
-isDbgInstr (Do call@Call{..}) =
+isDbgInstr :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
+isDbgInstr (AST.Do call@AST.Call{..}) =
   case getFuncName function of
     Just name ->
       if name == "\"llvm.dbg.declare\""
@@ -174,10 +173,9 @@ isDbgInstr (Do call@Call{..}) =
     _ -> pure True
 isDbgInstr _ = pure True
 
-
 getElemPtrInstr :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
-  [Named Instruction] -> Named Instruction -> m [Named Instruction]
-getElemPtrInstr acc instr@(varName := getElemPtr@IR.GetElementPtr {..}) = do
+  [AST.Named AST.Instruction] -> AST.Named AST.Instruction -> m [AST.Named AST.Instruction]
+getElemPtrInstr acc instr@(varName AST.:= getElemPtr@AST.GetElementPtr {..}) = do
   memAllocPtrs <- gets intMap
   md <- gets debugMap
   case getOperandName address of
@@ -196,17 +194,16 @@ getElemPtrInstr acc instr@(varName := getElemPtr@IR.GetElementPtr {..}) = do
     _ -> pure $ acc ++ [instr]
 getElemPtrInstr acc instr = pure $ acc ++ [instr]
 
-
-updateIntMap :: MonadState StateMap m => Global -> m ()
+updateIntMap :: MonadState StateMap m => G.Global -> m ()
 updateIntMap f = do
   forM_ (G.basicBlocks f) iterBB
     where
       iterBB bb@(G.BasicBlock name instrs term) = mapM updateVar instrs
-      updateVar instr@(varName := call@Call {}) =
+      updateVar instr@(varName AST.:= call@AST.Call {}) =
         case getMemAlloc call of
           Right size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
           _ -> pure ()
-      updateVar instr@(Do Store {..}) = do
+      updateVar instr@(AST.Do AST.Store {..}) = do
         memAllocPtrs <- gets intMap
         case (getOperandName address, getOperandName value) of
           (Just addrName, Just operandName) -> do
@@ -214,7 +211,7 @@ updateIntMap f = do
               Just size -> modify $ \sm -> sm { intMap =  M.insert addrName size (intMap sm)}
               Nothing -> pure ()
           _ -> pure ()
-      updateVar instr@(varName := Load {..}) = do -- TODO: Refactoring me
+      updateVar instr@(varName AST.:= AST.Load {..}) = do
         memAllocPtrs <- gets intMap
         case getOperandName address of
           Just addrName -> do
@@ -222,7 +219,7 @@ updateIntMap f = do
               Just size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
               Nothing -> pure ()
           _ -> pure ()
-      updateVar instr@(varName := IR.BitCast {..}) = do
+      updateVar instr@(varName AST.:= AST.BitCast {..}) = do
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
           _ -> pure ()
@@ -234,25 +231,25 @@ updateIntMap f = do
           Just memSize -> modify $ \sm -> sm { intMap =  M.insert varName memSize (intMap sm) }
           _ -> pure ()
 
-getMemAlloc :: Instruction -> Either String Integer
-getMemAlloc (Call {..}) =
+getMemAlloc :: AST.Instruction -> Either String Integer
+getMemAlloc (AST.Call {..}) =
   case function of
-    Right (ConstantOperand (C.GlobalReference (Name funcName))) ->
+    Right (AST.ConstantOperand (C.GlobalReference (AST.Name funcName))) ->
       if funcName == "malloc"
          then (Right . constantToInt . fst . head) arguments
          else Left "Error: Expected one argument"
     Left _ -> Left "Error: not a malloc"
 
 
-instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => Global -> m Definition
+instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => G.Global -> m AST.Definition
 instrument f = do
   let bbs = G.basicBlocks f
   if length bbs == 0
-     then pure $ IR.GlobalDefinition f
+     then pure $ AST.GlobalDefinition f
      else do
        newBBs <- mapM filterDbgInstr bbs
        instrumented <- mapM addBoundAssert newBBs
-       pure $ IR.GlobalDefinition $ f { basicBlocks = instrumented }
+       pure $ AST.GlobalDefinition $ f { G.basicBlocks = instrumented }
   where
     filterDbgInstr bb@(G.BasicBlock name instrs term) = do
       newInstrs <- filterM isDbgInstr instrs
@@ -265,46 +262,46 @@ instrument f = do
 
 helloWorldPass :: HaskellPass ()
 helloWorldPass mod = do
-  let defs = IR.moduleDefinitions mod
+  let defs = AST.moduleDefinitions mod
   defBoundChecker
   mapM_ iterDef (reverse defs)
   addGlobalString >> outOfBoundErrLogFormat >> return ()
   where
-    iterDef d@(IR.GlobalDefinition f@(Function {})) = do
+    iterDef d@(AST.GlobalDefinition f@(G.Function {})) = do
       updateIntMap f
       instrumented <- instrument f
       LLVM.emitDefn instrumented
-    iterDef d@(IR.MetadataNodeDefinition nodeId mdNode) = do
+    iterDef d@(AST.MetadataNodeDefinition nodeId mdNode) = do
       modify $ \sm -> sm { debugMap = M.insert nodeId mdNode (debugMap sm) }
       LLVM.emitDefn d
     iterDef d = LLVM.emitDefn d
 
 addGlobalString :: IRBuilderT Env ()
 addGlobalString = do
-  LLVM.globalStringPtr "this is instrumented string\n" (Name "globalProverStr")
+  LLVM.globalStringPtr "this is instrumented string\n" (AST.Name "globalProverStr")
   pure ()
 
 outOfBoundErrLogFormat :: IRBuilderT Env ()
 outOfBoundErrLogFormat = do
-  LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array size: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (Name "OUT_OF_BOUND_LOG_FORMAT")
+  LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array size: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
   pure ()
 
-callProver :: Named Instruction
+callProver :: AST.Named AST.Instruction
 callProver =
-  Do
-    Call {
+  AST.Do
+    AST.Call {
       tailCallKind = Nothing,
-      IR.callingConvention = CC.C,
-      IR.returnAttributes = [],
-      IR.type' = voidRetTyp,
-      IR.function = Right (ConstantOperand (C.GlobalReference (Name "prover"))),
-      IR.arguments = [],
-      IR.functionAttributes = [],
-      IR.metadata = []
+      AST.callingConvention = AST.C,
+      AST.returnAttributes = [],
+      AST.type' = voidRetTyp,
+      AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "prover"))),
+      AST.arguments = [],
+      AST.functionAttributes = [],
+      AST.metadata = []
     }
 
 callBoundAssert :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
-  Integer -> Integer -> p -> [(a1, MDRef a2)] -> m (Named Instruction)
+  Integer -> Integer -> p -> [(a1, AST.MDRef a2)] -> m (AST.Named AST.Instruction)
 callBoundAssert arrSize idx targetAddrName metadata = do
   (varName, allocatedFileName, allocatedLine) <- getVarSource targetAddrName
   (accessFileName, funcName, accessLine, accessCol) <- getMDScope metadata
@@ -314,87 +311,87 @@ callBoundAssert arrSize idx targetAddrName metadata = do
       accessCol' = makeInt32Operand accessCol
       allocatedLine' = makeInt32Operand allocatedLine
    in do
-     accessFileName' <- LLVM.globalStringPtr accessFileName (Name "FILE_NAME")
-     varName' <- LLVM.globalStringPtr varName (Name "VAR_NAME")
-     pure $ Do
-       Call {
+     accessFileName' <- LLVM.globalStringPtr accessFileName (AST.Name "FILE_NAME")
+     varName' <- LLVM.globalStringPtr varName (AST.Name "VAR_NAME")
+     pure $ AST.Do
+       AST.Call {
         tailCallKind = Nothing,
-        IR.callingConvention = CC.C,
-        IR.returnAttributes = [],
-        IR.type' = voidRetTyp,
-        IR.function = Right (ConstantOperand (C.GlobalReference (Name "boundAssertion"))),
-        IR.arguments = [
+        AST.callingConvention = AST.C,
+        AST.returnAttributes = [],
+        AST.type' = voidRetTyp,
+        AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "boundAssertion"))),
+        AST.arguments = [
           (arrSize', []), (idx', []), (accessLine', []), (accessCol', []),
-          (ConstantOperand accessFileName', []),
-          (ConstantOperand varName', []), (allocatedLine', [])
+          (AST.ConstantOperand accessFileName', []),
+          (AST.ConstantOperand varName', []), (allocatedLine', [])
         ],
-        IR.functionAttributes = [],
-        IR.metadata = []
+        AST.functionAttributes = [],
+        AST.metadata = []
       }
 
-defBoundChecker :: IRBuilderT Env Operand
+defBoundChecker :: IRBuilderT Env AST.Operand
 defBoundChecker = mdo
-  let arrSize = (IR.i32, LLVM.ParameterName "arrSize")
-      idx = (IR.i32, LLVM.ParameterName "idx")
-      line = (IR.i32, LLVM.ParameterName "line")
-      col = (IR.i32, LLVM.ParameterName "col")
-      fileName = (IR.ptr, LLVM.ParameterName "fileName")
-      varName = (IR.ptr, LLVM.ParameterName "varName")
-      allocatedLine = (IR.ptr, LLVM.ParameterName "allocatedLine")
+  let arrSize = (AST.i32, LLVM.ParameterName "arrSize")
+      idx = (AST.i32, LLVM.ParameterName "idx")
+      line = (AST.i32, LLVM.ParameterName "line")
+      col = (AST.i32, LLVM.ParameterName "col")
+      fileName = (AST.ptr, LLVM.ParameterName "fileName")
+      varName = (AST.ptr, LLVM.ParameterName "varName")
+      allocatedLine = (AST.ptr, LLVM.ParameterName "allocatedLine")
 
-  LLVM.function "boundAssertion" [arrSize, idx, line, col, fileName, varName, allocatedLine] IR.void body
+  LLVM.function "boundAssertion" [arrSize, idx, line, col, fileName, varName, allocatedLine] AST.void body
     where
       body ops@(arrSize' : idx' : line' : col' : fileName' : varName' : allocatedLine' : []) =  mdo
-        outOfBoundAccess <- LLVM.icmp IP.SGT idx' arrSize'
+        outOfBoundAccess <- LLVM.icmp AST.SGT idx' arrSize'
         LLVM.condBr outOfBoundAccess panic ret
         panic <- LLVM.block `LLVM.named` "panic"
         do
           LLVM.call voidRetTyp libcPrintf [
-            (ConstantOperand (C.GlobalReference (Name "OUT_OF_BOUND_LOG_FORMAT")), []),
-            (LocalReference IR.ptr (getLocalOperandName fileName'), []),
-            (LocalReference IR.ptr (getLocalOperandName line'), []),
-            (LocalReference IR.ptr (getLocalOperandName col'), []),
-            (LocalReference IR.ptr (getLocalOperandName arrSize'), []),
-            (LocalReference IR.ptr (getLocalOperandName idx'), []),
-            (LocalReference IR.ptr (getLocalOperandName varName'), []),
-            (LocalReference IR.ptr (getLocalOperandName allocatedLine'), [])]
+            (AST.ConstantOperand (C.GlobalReference (AST.Name "OUT_OF_BOUND_LOG_FORMAT")), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName arrSize'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName idx'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),
+            (AST.LocalReference AST.ptr (getLocalOperandName allocatedLine'), [])]
           LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
         ret <- LLVM.block `LLVM.named` "ret"
         pure ()
 
-defProver :: Definition
-defProver = GlobalDefinition functionDefaults
-  { name = Name "prover"
-  , parameters = ([], False)
-  , returnType = IR.void
-  , basicBlocks = [body]
+defProver :: AST.Definition
+defProver = AST.GlobalDefinition G.functionDefaults
+  { G.name = AST.Name "prover"
+  , G.parameters = ([], False)
+  , G.returnType = AST.void
+  , G.basicBlocks = [body]
   }
   where
-    ptrTyp = IR.PointerType (IR.AddrSpace 0)
-    body = BasicBlock
-        (UnName 1)
+    ptrTyp = AST.PointerType (AST.AddrSpace 0)
+    body = AST.BasicBlock
+        (AST.UnName 1)
         [
-          UnName 1 := Load {
-            IR.volatile = False,
-            IR.type' = IR.ptr,
-            IR.address = ConstantOperand (C.GlobalReference "globalProverStr"),
-            IR.maybeAtomicity = Nothing,
-            IR.alignment = 0,
-            IR.metadata = []
+          AST.UnName 1 AST.:= AST.Load {
+            AST.volatile = False,
+            AST.type' = AST.ptr,
+            AST.address = AST.ConstantOperand (C.GlobalReference "globalProverStr"),
+            AST.maybeAtomicity = Nothing,
+            AST.alignment = 0,
+            AST.metadata = []
                               },
-          Do
-            Call {
+          AST.Do
+            AST.Call {
               tailCallKind = Nothing,
-              IR.callingConvention = CC.C,
-              IR.returnAttributes = [],
-              IR.type' = FunctionType IR.void [] False,
-              IR.function = Right (ConstantOperand (C.GlobalReference (Name "printf"))),
-              IR.arguments = [(ConstantOperand (C.GlobalReference (Name "globalProverStr")), [])],
-              IR.functionAttributes = [],
-              IR.metadata = []
+              AST.callingConvention = AST.C,
+              AST.returnAttributes = [],
+              AST.type' = AST.FunctionType AST.void [] False,
+              AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "printf"))),
+              AST.arguments = [(AST.ConstantOperand (C.GlobalReference (AST.Name "globalProverStr")), [])],
+              AST.functionAttributes = [],
+              AST.metadata = []
             }
         ]
-        (Do $ Ret Nothing [])
+        (AST.Do $ AST.Ret Nothing [])
 
 main :: IO ()
 main = do
