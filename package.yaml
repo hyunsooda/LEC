@@ -27,6 +27,5 @@ executables:
     - bytestring
     - containers
     - ansi-terminal
-    - placeholders
     - llvm-hs       >= 15
     - llvm-hs-pure  >= 15
