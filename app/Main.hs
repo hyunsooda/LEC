@@ -25,7 +25,7 @@ printErr err =
 
 runPass :: (Pass a) -> PassInput -> AST.Module -> IO (AST.Module, a)
 runPass pass input mod = do
-  let haskellPassState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty }
+  let haskellPassState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty, taintMap = M.empty }
   let irBuilderState = LLVM.emptyIRBuilder
   let modBuilderState = LLVM.emptyModuleBuilder
   let (((result, _), output), defs) = LLVM.runModuleBuilder modBuilderState $ do

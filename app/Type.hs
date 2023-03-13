@@ -13,6 +13,7 @@ import LLVM.IRBuilder.Module as LLVM
 data StateMap = StateMap { intMap :: M.Map AST.Name Integer
                          , debugMap :: M.Map AST.MetadataNodeID AST.MDNode
                          , sourceMap :: M.Map AST.Name AST.DIVariable
+                         , taintMap :: M.Map AST.Name [AST.Name]
                          } deriving Show
 
 type PassInput = [String]
