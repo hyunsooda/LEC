@@ -11,6 +11,7 @@ import Type
 import Data.Word (Word16, Word32)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
+import Control.Monad.RWS hiding (void)
 
 import qualified LLVM.AST as AST
 import qualified LLVM.AST.Name as AST
@@ -29,6 +30,8 @@ import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
+import Debug.Trace
+
 getOperandName :: AST.Operand -> Maybe AST.Name
 getOperandName (AST.LocalReference _ varName) = Just varName
 getOperandName (AST.ConstantOperand (C.GlobalReference varName)) = Just varName
@@ -39,6 +42,13 @@ getLocalOperandName (AST.LocalReference _ varName) = varName
 
 constantToInt :: AST.Operand -> Integer
 constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
+
+getIntValue c@(AST.ConstantOperand _) = pure $ constantToInt c
+getIntValue (AST.LocalReference _ name) = do
+  memAllocPtrs <- gets intMap
+  case M.lookup name memAllocPtrs of
+    Just size -> pure size
+    _ -> undefined
 
 makeInt32Operand :: Integer -> AST.Operand
 makeInt32Operand n = AST.ConstantOperand (C.Int 32 n)
@@ -81,6 +91,7 @@ getMDFuncFileNames (AST.DINode (AST.DIScope (AST.DILocalScope (AST.DISubprogram 
   pure (fileName', funcName)
     where funcName = show name
 
+getMDScope :: (MonadState StateMap m, Num c, Num d) => [(a1, AST.MDRef a2)] -> m (String, String, c, d)
 getMDScope [(_, AST.MDRef id)] = do
   md <- gets debugMap
   let (line, col, mdRef) = getMDLocation $ (M.!) md id
@@ -93,6 +104,27 @@ typeSize :: AST.Type -> Either String Int
 typeSize typ = case typ of
   AST.IntegerType {..} -> Right $ fromIntegral typeBits
   _ -> Left $ "Unimplemented type: " ++ show typ
+
+updateIntVal :: MonadState StateMap m => AST.Name -> Integer -> m ()
+updateIntVal varName val = modify $ \sm -> sm { intMap   = M.insert varName val (intMap sm) }
+  
+updateTaintList :: MonadState StateMap m => AST.Name -> AST.Name -> m ()
+updateTaintList sourceVarName varName = do
+  tm <- gets taintMap
+  let tainted = M.filterWithKey findVar tm
+      (sourceVar', taintList) = M.elemAt 0 tainted
+      updatedTaints = taintList ++ [varName]
+   in
+   case length tainted of
+     0 -> modify $ \sm -> sm { taintMap = M.insert sourceVarName [] tm }
+     1 -> modify $ \sm -> sm { taintMap = M.insert sourceVar' updatedTaints tm }
+     _ -> undefined -- TODO: Change to assertion
+  where 
+    findVar allocaVar vars =
+      case null vars of
+        True  -> if allocaVar == sourceVarName then True else False
+        False -> if allocaVar == sourceVarName ||
+                    sourceVarName `elem` vars then True else False
 
 voidRetTyp :: AST.Type
 voidRetTyp = (AST.FunctionType AST.void [] False)
@@ -111,19 +143,26 @@ getFileName (Just mdRef) = do
     fileName (AST.DINode (AST.DIScope (AST.DIFile (AST.File {..})))) = show filename
 getFileName _ = undefined
 
-getVarSource :: (MonadState StateMap m, Num c) => p -> m (String, String, c)
-getVarSource targetVarName = do
+getVarSource ::
+  (MonadState StateMap m, Num c) =>
+  AST.Name -> [(a1, AST.MDRef a2)] -> m (String, String, c)
+getVarSource targetVarName md = do
   sourceInfo <- gets sourceMap
-  vals <- gets intMap
-  let toBeFixed = fst . head $ M.toList vals
-      -- TODO: Fix me
-      -- source = (M.!) sourceInfo targetVarName in
-      source = (M.!) sourceInfo toBeFixed in
+  tm <- gets taintMap
+  let sourceVar = M.filterWithKey findSourceVar tm
+      (sourceVarName, _) =  M.elemAt 0 sourceVar
+      source = (M.!) sourceInfo sourceVarName in
       getSourceInfo source
   where
     getSourceInfo (AST.DILocalVariable (AST.LocalVariable {..})) = do
       fileName' <- getFileName file
       pure $ (show name, fileName', fromIntegral line)
+    findSourceVar allocaVar vars =
+      let sourceVar = filter (\var -> var == targetVarName) vars in
+          case length sourceVar of
+            0 -> False
+            1 -> True
+            _ -> undefined
 
 isDbgInstr :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
 isDbgInstr (AST.Do call@AST.Call{..}) =
@@ -131,12 +170,12 @@ isDbgInstr (AST.Do call@AST.Call{..}) =
     Just name ->
       if name == "\"llvm.dbg.declare\""
          then
-         let (varMD, sourceMapMD) = (arguments !! 0, arguments !! 1)
-             varName = getVarName varMD
-          in do
-         varInfo <- getVarInfo sourceMapMD
-         addVarInfo varName varInfo
-         pure False
+           let (varMD, sourceMapMD) = (arguments !! 0, arguments !! 1)
+               varName = getVarName varMD
+            in do
+           varInfo <- getVarInfo sourceMapMD
+           addVarInfo varName varInfo
+           pure False
          else pure True
     _ -> pure True
 isDbgInstr _ = pure True
@@ -167,8 +206,9 @@ updateIntMap f = do
   forM_ (G.basicBlocks f) iterBB
     where
       iterBB bb@(G.BasicBlock name instrs term) = mapM updateVar instrs
-      updateVar instr@(varName AST.:= call@AST.Call {}) =
-        case getMemAlloc call of
+      updateVar instr@(varName AST.:= call@AST.Call {}) = do
+        ptr <- getMemAlloc call
+        case ptr of
           Right size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
           _ -> pure ()
       updateVar instr@(AST.Do AST.Store {..}) = do
@@ -176,37 +216,58 @@ updateIntMap f = do
         case (getOperandName address, getOperandName value) of
           (Just addrName, Just operandName) -> do
             case M.lookup operandName memAllocPtrs of
-              Just size -> modify $ \sm -> sm { intMap =  M.insert addrName size (intMap sm)}
-              Nothing -> pure ()
-          _ -> pure ()
+              Just size -> updateIntVal addrName size >> updateTaintList operandName addrName
+              Nothing -> undefined
+          (Just addrName, Nothing) -> do
+            val <- getIntValue value
+            modify $ \sm -> sm { intMap =  M.insert addrName val (intMap sm)}
+          _ -> undefined
+      updateVar instr@(varName AST.:= AST.Alloca {..}) = do
+        modify $ \sm -> sm { taintMap =  M.insert varName [] (taintMap sm)}
       updateVar instr@(varName AST.:= AST.Load {..}) = do
         memAllocPtrs <- gets intMap
         case getOperandName address of
           Just addrName -> do
             case M.lookup addrName memAllocPtrs of
-              Just size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
+              Just size -> updateIntVal varName size >> updateTaintList addrName varName
               Nothing -> pure ()
-          _ -> pure ()
-      updateVar instr@(varName AST.:= AST.BitCast {..}) = do
+          _ -> undefined
+      updateVar instr@(varName AST.:= AST.GetElementPtr {..}) = do
+        x <- gets taintMap
+        case getOperandName address of
+          Just addrName -> updateTaintList addrName varName
+          _ -> undefined
+      updateVar instr@(varName AST.:= AST.BitCast {..}) = do -- TODO: Refacotr me
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
-          _ -> pure ()
+          _ -> undefined
+      updateVar instr@(varName AST.:= AST.SExt{..}) = do -- TODO: Refactor me
+        case getOperandName operand0 of
+          Just operandName -> addToTracker varName operandName
+          _ -> undefined
+      updateVar instr@(varName AST.:= AST.Mul{..}) = do -- TODO: Refactor me (consider variable * variable)
+        x <- gets intMap
+        lhs <- getIntValue operand0
+        rhs <- getIntValue operand1
+        modify $ \sm -> sm { intMap =  M.insert varName (lhs * rhs) (intMap sm)}
       updateVar _ = pure ()
 
       addToTracker varName operandName = do
         memAllocPtrs <- gets intMap
         case M.lookup operandName memAllocPtrs of
-          Just memSize -> modify $ \sm -> sm { intMap =  M.insert varName memSize (intMap sm) }
+          Just val -> updateIntVal varName val >> updateTaintList operandName varName
           _ -> pure ()
 
-getMemAlloc :: AST.Instruction -> Either String Integer
+getMemAlloc :: (MonadState StateMap m) => AST.Instruction -> m (Either String Integer)
 getMemAlloc (AST.Call {..}) =
   case function of
     Right (AST.ConstantOperand (C.GlobalReference (AST.Name funcName))) ->
       if funcName == "malloc"
-         then (Right . constantToInt . fst . head) arguments
-         else Left "Error: Expected one argument"
-    Left _ -> Left "Error: not a malloc"
+         then do
+           val <- getIntValue . fst . head $ arguments
+           pure $ Right val
+         else pure $ Left "Error: Expected one argument"
+    Left _ -> pure $ Left "Error: not a malloc"
 
 
 instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => G.Global -> m AST.Definition
@@ -251,10 +312,15 @@ callProver =
       AST.metadata = []
     }
 
-callBoundAssert :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
-  Integer -> Integer -> p -> [(a1, AST.MDRef a2)] -> m (AST.Named AST.Instruction)
+callBoundAssert
+  :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
+    Integer
+    -> Integer
+    -> AST.Name
+    -> [(a1, AST.MDRef a2)]
+    -> m (AST.Named AST.Instruction)
 callBoundAssert arrSize idx targetAddrName metadata = do
-  (varName, allocatedFileName, allocatedLine) <- getVarSource targetAddrName
+  (varName, allocatedFileName, allocatedLine) <- getVarSource targetAddrName metadata
   (accessFileName, funcName, accessLine, accessCol) <- getMDScope metadata
   let arrSize' = makeInt32Operand arrSize
       idx' = makeInt32Operand idx
