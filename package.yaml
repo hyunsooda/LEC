@@ -17,15 +17,37 @@ category:            Compilers
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/hyunsooda/LEC>
 
+dependencies: base >= 4.7 && < 5
+
+internal-libraries:
+  lec-lib:
+    source-dirs: src
+    dependencies:
+      - mtl
+      - bytestring
+      - containers
+      - ansi-terminal
+      - llvm-hs       >= 15
+      - llvm-hs-pure  >= 15
+
 executables:
   lec:
-    main:                Main.hs
-    source-dirs:         app
+    main: Main.hs
+    source-dirs: app
+    other-modules: []
     dependencies:
-    - base >= 4.7 && < 5
-    - mtl
-    - bytestring
-    - containers
-    - ansi-terminal
-    - llvm-hs       >= 15
-    - llvm-hs-pure  >= 15
+      - lec-lib 
+
+tests:
+  oob:
+    main: OOB.hs
+    source-dirs: tests
+    dependencies:
+      - process
+      - filepath
+      - text
+      - string-conversions
+      - tasty
+      - tasty-hunit
+      - tasty-golden
+      - lec-lib
