@@ -107,6 +107,9 @@ typeSize typ = case typ of
 
 updateIntVal :: MonadState StateMap m => AST.Name -> Integer -> m ()
 updateIntVal varName val = modify $ \sm -> sm { intMap   = M.insert varName val (intMap sm) }
+
+initTaintList :: MonadState StateMap m => AST.Name -> m ()
+initTaintList sourceVarName = modify $ \sm -> sm { taintMap =  M.insert sourceVarName [] (taintMap sm)}
   
 updateTaintList :: MonadState StateMap m => AST.Name -> AST.Name -> m ()
 updateTaintList sourceVarName varName = do
@@ -185,18 +188,16 @@ getElemPtrInstr :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder 
 getElemPtrInstr acc instr@(varName AST.:= getElemPtr@AST.GetElementPtr {..}) = do
   memAllocPtrs <- gets intMap
   md <- gets debugMap
+  idx <- getIntValue (head indices)
   case getOperandName address of
     Just addrName ->
       case M.lookup addrName memAllocPtrs of
         Just size ->
-          let idx = constantToInt . head $ indices
-              mdID = getMDNodeID $ snd . head $ metadata
-           in
-           case typeSize type' of
-              Right 32 -> do
-                boundAssertCall <- callBoundAssert (size `div` 4) idx addrName metadata
-                pure $ acc ++ [boundAssertCall, instr]
-              _ -> pure $ acc ++ [instr]
+         case typeSize type' of
+            Right 32 -> do
+              boundAssertCall <- callBoundAssert (size `div` 4) idx addrName metadata
+              pure $ acc ++ [boundAssertCall, instr]
+            _ -> pure $ acc ++ [instr]
         Nothing -> pure $ acc ++ [instr]
     _ -> pure $ acc ++ [instr]
 getElemPtrInstr acc instr = pure $ acc ++ [instr]
@@ -222,8 +223,7 @@ updateIntMap f = do
             val <- getIntValue value
             modify $ \sm -> sm { intMap =  M.insert addrName val (intMap sm)}
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.Alloca {..}) = do
-        modify $ \sm -> sm { taintMap =  M.insert varName [] (taintMap sm)}
+      updateVar instr@(varName AST.:= AST.Alloca {..}) = initTaintList varName
       updateVar instr@(varName AST.:= AST.Load {..}) = do
         memAllocPtrs <- gets intMap
         case getOperandName address of
@@ -233,7 +233,6 @@ updateIntMap f = do
               Nothing -> pure ()
           _ -> undefined
       updateVar instr@(varName AST.:= AST.GetElementPtr {..}) = do
-        x <- gets taintMap
         case getOperandName address of
           Just addrName -> updateTaintList addrName varName
           _ -> undefined
@@ -246,7 +245,6 @@ updateIntMap f = do
           Just operandName -> addToTracker varName operandName
           _ -> undefined
       updateVar instr@(varName AST.:= AST.Mul{..}) = do -- TODO: Refactor me (consider variable * variable)
-        x <- gets intMap
         lhs <- getIntValue operand0
         rhs <- getIntValue operand1
         modify $ \sm -> sm { intMap =  M.insert varName (lhs * rhs) (intMap sm)}
@@ -295,7 +293,7 @@ addGlobalString = do
 
 outOfBoundErrLogFormat :: IRBuilderT Env ()
 outOfBoundErrLogFormat = do
-  LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array size: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
+  LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array length: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
   pure ()
 
 callProver :: AST.Named AST.Instruction
