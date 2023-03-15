@@ -22,6 +22,7 @@ dependencies: base >= 4.7 && < 5
 internal-libraries:
   lec-lib:
     source-dirs: src
+    other-modules: []
     dependencies:
       - mtl
       - bytestring
@@ -34,6 +35,7 @@ executables:
   lec:
     main: Main.hs
     source-dirs: app
+    other-modules: [Cli]
     dependencies:
       - lec-lib
       - optparse-applicative
@@ -42,6 +44,7 @@ tests:
   oob:
     main: OOB.hs
     source-dirs: tests
+    other-modules: []
     dependencies:
       - process
       - filepath
