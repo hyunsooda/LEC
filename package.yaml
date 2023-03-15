@@ -34,9 +34,9 @@ executables:
   lec:
     main: Main.hs
     source-dirs: app
-    other-modules: []
     dependencies:
-      - lec-lib 
+      - lec-lib
+      - optparse-applicative
 
 tests:
   oob:
