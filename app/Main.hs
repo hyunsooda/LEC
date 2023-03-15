@@ -11,18 +11,17 @@ import Data.List (isSuffixOf)
 main :: IO ()
 main = do
   args <- getArgs
-  if (length args) == 1
+  if (length args) == 2
   then do
     let file = head args
+        outputPath = args !! 1
     if isSuffixOf ".bc" file
-      then analyzeBC file
+      then analyzeBC file outputPath
     else if isSuffixOf ".ll" file
-      then analyzeLL file 
+      then analyzeLL file outputPath
     else do
       putStrLn ("Invalid file extension (need either .bc or .ll): " ++ file)
       exitFailure
   else do
     putStrLn $ "usage: HelloWorld FILE.{bc,ll}"
     exitFailure
-      where
-        outputPath = "output.ll"

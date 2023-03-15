@@ -24,11 +24,12 @@ goldenTests = testGroup "C-OOB" <$> sequence [basic]
 
 runFile :: FilePath -> IO String
 runFile file = do
-  analyzeLL file
-  (errCode, stdout', _) <- readProcessWithExitCode "lli" ["output.ll"] ""
+  analyzeLL file outputFile
+  (errCode, stdout', _) <- readProcessWithExitCode "lli" [outputFile] ""
   assertEqual "Must exit with error code 1" (ExitFailure 1) errCode
-  callCommand "rm output.ll"
+  callCommand ("rm " ++ outputFile)
   pure stdout'
+    where outputFile = "output.ll"
 
 basic :: IO TestTree
 basic = do

@@ -35,8 +35,8 @@ runPass pass input mod = do
   mapM_ (\log -> if isPrefixOf "ERROR: " log then printErr log else putStrLn log) output
   return (mod { AST.moduleDefinitions = (defProver:defs) }, result)
 
-analyzeLL :: FilePath -> IO ()
-analyzeLL file = do
+analyzeLL :: FilePath -> String -> IO ()
+analyzeLL file outputPath = do
   fcts <- readFile file
   mod <- LLVM.withContext (\ctx -> do
     LLVM.withModuleFromLLVMAssembly ctx fcts LLVM.moduleAST)
@@ -45,10 +45,10 @@ analyzeLL file = do
     LLVM.withModuleFromAST
     ctx
     mod'
-    (\modl -> LLVM.writeLLVMAssemblyToFile (LLVM.File "output.ll") modl)
+    (\modl -> LLVM.writeLLVMAssemblyToFile (LLVM.File outputPath) modl)
 
-analyzeBC :: FilePath -> IO ()
-analyzeBC file = do
+analyzeBC :: FilePath -> String -> IO ()
+analyzeBC file outputPath = do
   mod <- LLVM.withContext (\ctx -> do
     LLVM.withModuleFromBitcode ctx (LLVM.File file) LLVM.moduleAST)
   (mod', _) <- runPass outOfBoundChecker [] mod
@@ -56,7 +56,7 @@ analyzeBC file = do
     LLVM.withModuleFromAST
     ctx
     mod'
-    (\modl -> LLVM.writeBitcodeToFile (LLVM.File "HELLO.bc") modl)
+    (\modl -> LLVM.writeBitcodeToFile (LLVM.File outputPath) modl)
 
 outOfBoundChecker :: Pass ()
 outOfBoundChecker mod = do
