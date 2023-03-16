@@ -20,4 +20,4 @@ type PassInput = [String]
 type PassState = StateMap
 type PassOutput = [String]
 type Env = (RWST PassInput PassOutput PassState ModuleBuilder)
-type Pass a = AST.Module -> IRBuilderT Env a
+type Pass a = AST.Module -> Bool -> IRBuilderT Env a
