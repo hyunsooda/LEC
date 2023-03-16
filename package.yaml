@@ -17,19 +17,20 @@ category:            Compilers
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/hyunsooda/LEC>
 
+default-extensions: RecordWildCards
+
 dependencies: base >= 4.7 && < 5
 
-internal-libraries:
-  lec-lib:
-    source-dirs: src
-    other-modules: []
-    dependencies:
-      - mtl
-      - bytestring
-      - containers
-      - ansi-terminal
-      - llvm-hs       >= 15
-      - llvm-hs-pure  >= 15
+library:
+  source-dirs: src
+  other-modules: []
+  dependencies:
+    - mtl
+    - bytestring
+    - containers
+    - ansi-terminal
+    - llvm-hs       >= 15
+    - llvm-hs-pure  >= 15
 
 executables:
   lec:
@@ -37,7 +38,7 @@ executables:
     source-dirs: app
     other-modules: [Cli]
     dependencies:
-      - lec-lib
+      - LEC
       - optparse-applicative
 
 tests:
@@ -53,4 +54,4 @@ tests:
       - tasty
       - tasty-hunit
       - tasty-golden
-      - lec-lib
+      - LEC
