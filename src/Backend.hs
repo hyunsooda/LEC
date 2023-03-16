@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Backend where
@@ -31,6 +30,10 @@ import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
 import Debug.Trace
+
+getName :: AST.Name -> String
+getName (AST.UnName a) = show a
+getName (AST.Name a) = show a
 
 getOperandName :: AST.Operand -> Maybe AST.Name
 getOperandName (AST.LocalReference _ varName) = Just varName
@@ -134,6 +137,9 @@ voidRetTyp = (AST.FunctionType AST.void [] False)
 
 libcExit :: AST.Operand
 libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
+
+emitLibcExit :: MonadModuleBuilder m => m AST.Operand
+emitLibcExit = LLVM.extern (AST.Name "exit") [AST.i32] AST.void
 
 libcPrintf :: AST.Operand
 libcPrintf = AST.ConstantOperand (C.GlobalReference (AST.Name "printf"))
@@ -286,11 +292,6 @@ instrument f = do
       newInstrs <- foldM getElemPtrInstr [] instrs
       pure $ G.BasicBlock name newInstrs term
 
-addGlobalString :: IRBuilderT Env ()
-addGlobalString = do
-  LLVM.globalStringPtr "this is instrumented string\n" (AST.Name "globalProverStr")
-  pure ()
-
 outOfBoundErrLogFormat :: IRBuilderT Env ()
 outOfBoundErrLogFormat = do
   LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array length: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
@@ -373,6 +374,11 @@ defBoundChecker = mdo
           LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
         ret <- LLVM.block `LLVM.named` "ret"
         pure ()
+
+addGlobalString :: IRBuilderT Env ()
+addGlobalString = do
+  LLVM.globalStringPtr "this is instrumented string\n" (AST.Name "globalProverStr")
+  pure ()
 
 defProver :: AST.Definition
 defProver = AST.GlobalDefinition G.functionDefaults
