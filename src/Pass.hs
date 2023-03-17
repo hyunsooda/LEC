@@ -35,7 +35,7 @@ runPass pass input mod debug = do
                                 runIRBuilderT irBuilderState $ pass mod debug
 
   mapM_ (\log -> if isPrefixOf "ERROR: " log then printErr log else putStrLn log) output
-  return (mod { AST.moduleDefinitions = (defProver:defs) }, result)
+  return (mod { AST.moduleDefinitions = defs }, result)
 
 analyzeLL :: FilePath -> String -> Bool -> IO ()
 analyzeLL file outputPath debug = do
@@ -67,7 +67,7 @@ outOfBoundChecker mod debug = do
   emitChecker funcNames
   mapM_ iterDef (reverse defs)
   ppSM  
-  addGlobalString >> outOfBoundErrLogFormat >> return ()
+  outOfBoundErrLogFormat >> pure ()
   where
     iterDef d@(AST.GlobalDefinition f@(G.Function {..})) = do
       updateIntMap f
