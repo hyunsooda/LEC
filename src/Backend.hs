@@ -2,10 +2,12 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Backend where
 
 import Type
+import Util
 
 import Data.Word (Word16, Word32)
 import qualified Data.Map as M
@@ -293,8 +295,12 @@ instrument f = do
       pure $ G.BasicBlock name newInstrs term
 
 outOfBoundErrLogFormat :: IRBuilderT Env ()
-outOfBoundErrLogFormat = do
-  LLVM.globalStringPtr "Found out of bound access: [%s:%d:%d]: \n\t array length: %d, indexed by: %d \n \t variable name: %s, allocated at: %d\n" (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
+outOfBoundErrLogFormat =
+  let oobFormatter = [mtstr|Found out of bound access: [%s:%d:%d]
+    array length: %d, indexed by: %d
+    variable name: %s, allocated at: %d
+|] in do
+  LLVM.globalStringPtr oobFormatter (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
   pure ()
 
 callProver :: AST.Named AST.Instruction
