@@ -2,9 +2,12 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 module Backend where
+
+import Prelude hiding (id)
 
 import Type
 import Util
@@ -12,26 +15,19 @@ import Util
 import Data.Word (Word16, Word32)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
-import Control.Monad.RWS hiding (void)
 
 import qualified LLVM.AST as AST
-import qualified LLVM.AST.Name as AST
 import qualified LLVM.AST.Type as AST
 import qualified LLVM.AST.CallingConvention as AST
-import qualified LLVM.AST.AddrSpace as AST
 import qualified LLVM.AST.IntegerPredicate as AST
 import qualified LLVM.AST.Operand as AST hiding (PointerType)
 
 import qualified LLVM.AST.Global as G
 import qualified LLVM.AST.Constant as C
 
-import LLVM.Internal.Context as LLVM
-import LLVM.Internal.Module as LLVM
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
-
-import Debug.Trace
 
 getName :: AST.Name -> String
 getName (AST.UnName a) = show a
@@ -48,6 +44,7 @@ getLocalOperandName (AST.LocalReference _ varName) = varName
 constantToInt :: AST.Operand -> Integer
 constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
 
+getIntValue :: MonadState StateMap m => AST.Operand -> m Integer
 getIntValue c@(AST.ConstantOperand _) = pure $ constantToInt c
 getIntValue (AST.LocalReference _ name) = do
   memAllocPtrs <- gets intMap
@@ -66,7 +63,6 @@ getFuncName =
 
 getMDNodeID :: AST.MDRef a -> AST.MetadataNodeID
 getMDNodeID (AST.MDRef id) = id
-getMDNodeID _ = undefined
 
 getMDLocation :: AST.MDNode -> (Word32, Word16, AST.MDRef AST.DILocalScope)
 getMDLocation (AST.DILocation (AST.Location {..})) = (line, column, scope)
@@ -78,7 +74,6 @@ getMD mdRef = do
 
 getVarName :: (AST.Operand, a) -> AST.Name
 getVarName (AST.MetadataOperand (AST.MDValue (AST.LocalReference _ varName)), _) = varName
-getVarName _ = undefined
 
 getVarInfo :: MonadState StateMap m => (AST.Operand, a) -> m AST.DINode
 getVarInfo (AST.MetadataOperand (AST.MDNode mdRef), _) = do
@@ -152,15 +147,13 @@ getFileName (Just mdRef) = do
   pure $ fileName md
   where
     fileName (AST.DINode (AST.DIScope (AST.DIFile (AST.File {..})))) = show filename
-getFileName _ = undefined
 
 getVarSource ::
-  (MonadState StateMap m, Num c) =>
-  AST.Name -> [(a1, AST.MDRef a2)] -> m (String, String, c)
-getVarSource targetVarName md = do
+  (MonadState StateMap m, Num c) => AST.Name -> m (String, String, c)
+getVarSource targetVarName = do
   sourceInfo <- gets sourceMap
   tm <- gets taintMap
-  let sourceVar = M.filterWithKey findSourceVar tm
+  let sourceVar = M.filter findSourceVar tm
       (sourceVarName, _) =  M.elemAt 0 sourceVar
       source = (M.!) sourceInfo sourceVarName in
       getSourceInfo source
@@ -168,7 +161,7 @@ getVarSource targetVarName md = do
     getSourceInfo (AST.DILocalVariable (AST.LocalVariable {..})) = do
       fileName' <- getFileName file
       pure $ (show name, fileName', fromIntegral line)
-    findSourceVar allocaVar vars =
+    findSourceVar vars =
       let sourceVar = filter (\var -> var == targetVarName) vars in
           case length sourceVar of
             0 -> False
@@ -176,8 +169,8 @@ getVarSource targetVarName md = do
             _ -> undefined
 
 isDbgInstr :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
-isDbgInstr (AST.Do call@AST.Call{..}) =
-  case getFuncName function of
+isDbgInstr (AST.Do AST.Call{function = func, arguments}) =
+  case getFuncName func of
     Just name ->
       if name == "\"llvm.dbg.declare\""
          then
@@ -193,9 +186,8 @@ isDbgInstr _ = pure True
 
 getElemPtrInstr :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
   [AST.Named AST.Instruction] -> AST.Named AST.Instruction -> m [AST.Named AST.Instruction]
-getElemPtrInstr acc instr@(varName AST.:= getElemPtr@AST.GetElementPtr {..}) = do
+getElemPtrInstr acc instr@(_ AST.:= AST.GetElementPtr {..}) = do
   memAllocPtrs <- gets intMap
-  md <- gets debugMap
   idx <- getIntValue (head indices)
   case getOperandName address of
     Just addrName ->
@@ -214,13 +206,13 @@ updateIntMap :: MonadState StateMap m => G.Global -> m ()
 updateIntMap f = do
   forM_ (G.basicBlocks f) iterBB
     where
-      iterBB bb@(G.BasicBlock name instrs term) = mapM updateVar instrs
-      updateVar instr@(varName AST.:= call@AST.Call {}) = do
-        ptr <- getMemAlloc call
+      iterBB (G.BasicBlock _ instrs _) = mapM updateVar instrs
+      updateVar (varName AST.:= callInstr@AST.Call {}) = do
+        ptr <- getMemAlloc callInstr
         case ptr of
           Right size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
           _ -> pure ()
-      updateVar instr@(AST.Do AST.Store {..}) = do
+      updateVar (AST.Do AST.Store {..}) = do
         memAllocPtrs <- gets intMap
         case (getOperandName address, getOperandName value) of
           (Just addrName, Just operandName) -> do
@@ -231,8 +223,8 @@ updateIntMap f = do
             val <- getIntValue value
             modify $ \sm -> sm { intMap =  M.insert addrName val (intMap sm)}
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.Alloca {..}) = initTaintList varName
-      updateVar instr@(varName AST.:= AST.Load {..}) = do
+      updateVar (varName AST.:= AST.Alloca {}) = initTaintList varName
+      updateVar (varName AST.:= AST.Load {..}) = do
         memAllocPtrs <- gets intMap
         case getOperandName address of
           Just addrName -> do
@@ -240,19 +232,19 @@ updateIntMap f = do
               Just size -> updateIntVal varName size >> updateTaintList addrName varName
               Nothing -> pure ()
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.GetElementPtr {..}) = do
+      updateVar (varName AST.:= AST.GetElementPtr {..}) = do
         case getOperandName address of
           Just addrName -> updateTaintList addrName varName
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.BitCast {..}) = do -- TODO: Refacotr me
+      updateVar (varName AST.:= AST.BitCast {..}) = do -- TODO: Refacotr me
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.SExt{..}) = do -- TODO: Refactor me
+      updateVar (varName AST.:= AST.SExt{..}) = do -- TODO: Refactor me
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
           _ -> undefined
-      updateVar instr@(varName AST.:= AST.Mul{..}) = do -- TODO: Refactor me (consider variable * variable)
+      updateVar (varName AST.:= AST.Mul{..}) = do -- TODO: Refactor me (consider variable * variable)
         lhs <- getIntValue operand0
         rhs <- getIntValue operand1
         modify $ \sm -> sm { intMap =  M.insert varName (lhs * rhs) (intMap sm)}
@@ -265,8 +257,8 @@ updateIntMap f = do
           _ -> pure ()
 
 getMemAlloc :: (MonadState StateMap m) => AST.Instruction -> m (Either String Integer)
-getMemAlloc (AST.Call {..}) =
-  case function of
+getMemAlloc (AST.Call {arguments, function = func}) =
+  case func of
     Right (AST.ConstantOperand (C.GlobalReference (AST.Name funcName))) ->
       if funcName == "malloc"
          then do
@@ -274,6 +266,7 @@ getMemAlloc (AST.Call {..}) =
            pure $ Right val
          else pure $ Left "Error: Expected one argument"
     Left _ -> pure $ Left "Error: not a malloc"
+    _ -> undefined
 
 
 instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => G.Global -> m AST.Definition
@@ -286,11 +279,11 @@ instrument f = do
        instrumented <- mapM addBoundAssert newBBs
        pure $ AST.GlobalDefinition $ f { G.basicBlocks = instrumented }
   where
-    filterDbgInstr bb@(G.BasicBlock name instrs term) = do
+    filterDbgInstr (G.BasicBlock name instrs term) = do
       newInstrs <- filterM isDbgInstr instrs
       pure $ G.BasicBlock name newInstrs term
 
-    addBoundAssert bb@(G.BasicBlock name instrs term) = do
+    addBoundAssert (G.BasicBlock name instrs term) = do
       newInstrs <- foldM getElemPtrInstr [] instrs
       pure $ G.BasicBlock name newInstrs term
 
@@ -300,7 +293,7 @@ outOfBoundErrLogFormat =
     array length: %d, indexed by: %d
     variable name: %s, allocated at: %d
 |] in do
-  LLVM.globalStringPtr oobFormatter (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
+  _ <- LLVM.globalStringPtr oobFormatter (AST.Name "OUT_OF_BOUND_LOG_FORMAT")
   pure ()
 
 callProver :: AST.Named AST.Instruction
@@ -325,8 +318,8 @@ callBoundAssert
     -> [(a1, AST.MDRef a2)]
     -> m (AST.Named AST.Instruction)
 callBoundAssert arrSize idx targetAddrName metadata = do
-  (varName, allocatedFileName, allocatedLine) <- getVarSource targetAddrName metadata
-  (accessFileName, funcName, accessLine, accessCol) <- getMDScope metadata
+  (varName, _, allocatedLine) <- getVarSource targetAddrName
+  (accessFileName, _, accessLine, accessCol) <- getMDScope metadata
   let arrSize' = makeInt32Operand arrSize
       idx' = makeInt32Operand idx
       accessLine' = makeInt32Operand accessLine
@@ -363,20 +356,19 @@ defBoundChecker = mdo
 
   LLVM.function "boundAssertion" [arrSize, idx, line, col, fileName, varName, allocatedLine] AST.void body
     where
-      body ops@(arrSize' : idx' : line' : col' : fileName' : varName' : allocatedLine' : []) =  mdo
+      body (arrSize' : idx' : line' : col' : fileName' : varName' : allocatedLine' : []) =  mdo
         outOfBoundAccess <- LLVM.icmp AST.SGT idx' arrSize'
         LLVM.condBr outOfBoundAccess panic ret
         panic <- LLVM.block `LLVM.named` "panic"
-        do
-          LLVM.call voidRetTyp libcPrintf [
-            (AST.ConstantOperand (C.GlobalReference (AST.Name "OUT_OF_BOUND_LOG_FORMAT")), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName arrSize'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName idx'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),
-            (AST.LocalReference AST.ptr (getLocalOperandName allocatedLine'), [])]
-          LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
+        _ <- LLVM.call voidRetTyp libcPrintf [
+          (AST.ConstantOperand (C.GlobalReference (AST.Name "OUT_OF_BOUND_LOG_FORMAT")), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName arrSize'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName idx'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),
+          (AST.LocalReference AST.ptr (getLocalOperandName allocatedLine'), [])]
+        _ <- LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
         ret <- LLVM.block `LLVM.named` "ret"
         pure ()

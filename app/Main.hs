@@ -1,12 +1,9 @@
 module Main where
 
 import Cli
-import Type
-import Backend
 import Pass
 
 import System.Exit (exitFailure)
-import System.Environment (getArgs)
 import Data.List (isSuffixOf)
 
 main :: IO ()

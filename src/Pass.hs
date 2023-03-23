@@ -2,19 +2,19 @@
 
 module Pass where
 
+import Prelude hiding (mod, log)
+
 import Type
 import Backend
 
 import System.Console.ANSI
-import Control.Monad (when, unless)
 import Control.Monad.State hiding (void)
-import Control.Monad.RWS hiding (void)
+import Control.Monad.RWS hiding (void, pass)
 import qualified Data.Map as M
 import Data.List (isPrefixOf)
 
 import qualified LLVM.AST as AST
 import qualified LLVM.AST.Global as G
-import qualified LLVM.IRBuilder.Module as LLVM
 
 import LLVM.Internal.Context as LLVM
 import LLVM.Internal.Module as LLVM
@@ -69,7 +69,7 @@ outOfBoundChecker mod debug = do
   ppSM  
   outOfBoundErrLogFormat >> pure ()
   where
-    iterDef d@(AST.GlobalDefinition f@(G.Function {..})) = do
+    iterDef (AST.GlobalDefinition f@(G.Function {})) = do
       updateIntMap f
       instrumented <- instrument f
       LLVM.emitDefn instrumented
@@ -79,10 +79,10 @@ outOfBoundChecker mod debug = do
     iterDef d = LLVM.emitDefn d
 
     emitChecker funcNames = do
-      defBoundChecker
+      _ <- defBoundChecker
       unless ("\"exit\"" `elem` funcNames) $ emitLibcExit >> pure ()
     
-    getFuncNames acc d@(AST.GlobalDefinition f@(G.Function {..})) = getName name : acc
+    getFuncNames acc (AST.GlobalDefinition (G.Function {..})) = getName name : acc
     getFuncNames acc _ = acc
     
     -- print state map

@@ -15,6 +15,7 @@ mkParams =
   <*> strOption (long "output" <> short 'o' <> help "output file name")
   <*> switch (long "debug" <> short 'd' <> help "print intermidate debugging outputs")
 
+opts :: ParserInfo ExecParams
 opts =
   info (mkParams <**> helper) (fullDesc <> progDesc desc)
     where
@@ -22,4 +23,5 @@ opts =
       title = "LEC (LLVM-Based Exectend Compiler for Security Improvment)"
       repo = "https://github.com/hyunsooda/LEC"
 
+parseCli :: IO ExecParams
 parseCli = execParser opts

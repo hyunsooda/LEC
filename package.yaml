@@ -21,6 +21,16 @@ default-extensions: RecordWildCards
 
 dependencies: base >= 4.7 && < 5
 
+ghc-options:
+  - -Wall
+  - -Werror
+  - -Wcompat
+  - -Widentities
+  - -Wincomplete-uni-patterns
+  - -Wno-unused-top-binds
+  - -Wno-orphans
+  - -Wno-incomplete-patterns
+
 library:
   source-dirs: src
   other-modules: []
@@ -29,6 +39,7 @@ library:
     - bytestring
     - containers
     - ansi-terminal
+    - template-haskell
     - llvm-hs       >= 15
     - llvm-hs-pure  >= 15
 

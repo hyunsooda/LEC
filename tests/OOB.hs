@@ -3,8 +3,6 @@ module Main where
 import System.Exit
 import System.Process (callCommand, readProcessWithExitCode)
 import System.FilePath (takeBaseName, replaceExtension)
-import qualified Data.Text.IO as T
-import Data.Text (Text)
 import Data.String.Conversions
 
 import Test.Tasty

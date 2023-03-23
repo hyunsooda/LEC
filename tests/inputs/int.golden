@@ -1,3 +1,3 @@
-Found out of bound access: ["int.c":10:20]: 
-	 array length: 15, indexed by: 56 
- 	 variable name: "intarr", allocated at: 8
+Found out of bound access: ["int.c":10:20]
+    array length: 15, indexed by: 56
+    variable name: "intarr", allocated at: 8
