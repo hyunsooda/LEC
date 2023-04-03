@@ -30,6 +30,7 @@ ghc-options:
   - -Wno-unused-top-binds
   - -Wno-orphans
   - -Wno-incomplete-patterns
+  - -Wno-incomplete-record-updates
 
 library:
   source-dirs: src

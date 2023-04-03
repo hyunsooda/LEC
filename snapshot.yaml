@@ -1,4 +1,4 @@
-resolver: lts-17.12
+resolver: lts-20.17
 
 packages:
 - url: https://github.com/christianlavoie/llvm-hs/archive/refs/heads/llvm-15.zip
