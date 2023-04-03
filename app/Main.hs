@@ -9,11 +9,9 @@ import Data.List (isSuffixOf)
 main :: IO ()
 main = parseCli >>= instrument
   where
-    instrument ExecParams{..} = 
-      if isSuffixOf ".bc" inputPath
-        then analyzeBC inputPath outputPath debug
-      else if isSuffixOf ".ll" inputPath
-        then analyzeLL inputPath outputPath debug
-      else do
+    instrument ExecParams {..}
+      | ".bc" `isSuffixOf` inputPath = analyzeBC inputPath outputPath debug
+      | ".ll" `isSuffixOf` inputPath = analyzeLL inputPath outputPath debug
+      | otherwise = do
         putStrLn ("Invalid file extension (need either .bc or .ll): " ++ inputPath)
         exitFailure
