@@ -1,6 +1,9 @@
 name: Run CI
 run-name: ${{ github.actor }} is running module tests triggered by ${{github.event_name }} event.
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
