@@ -25,7 +25,7 @@ printErr :: String -> IO ()
 printErr err =
   setSGR [SetColor Foreground Vivid Red] >> print err >> setSGR [Reset]
 
-runPass :: (Pass a) -> PassInput -> AST.Module -> Bool -> IO (AST.Module, a)
+runPass :: Pass a -> PassInput -> AST.Module -> Bool -> IO (AST.Module, a)
 runPass pass input mod debug = do
   let haskellPassState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty, taintMap = M.empty }
   let irBuilderState = LLVM.emptyIRBuilder
@@ -34,7 +34,7 @@ runPass pass input mod debug = do
                               (\x -> evalRWST x input haskellPassState) $
                                 runIRBuilderT irBuilderState $ pass mod debug
 
-  mapM_ (\log -> if isPrefixOf "ERROR: " log then printErr log else putStrLn log) output
+  mapM_ (\log -> if "ERROR: " `isPrefixOf` log then printErr log else putStrLn log) output
   return (mod { AST.moduleDefinitions = defs }, result)
 
 analyzeLL :: FilePath -> String -> Bool -> IO ()

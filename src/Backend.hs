@@ -124,13 +124,11 @@ updateTaintList sourceVarName varName = do
      _ -> undefined -- TODO: Change to assertion
   where 
     findVar allocaVar vars =
-      case null vars of
-        True  -> if allocaVar == sourceVarName then True else False
-        False -> if allocaVar == sourceVarName ||
-                    sourceVarName `elem` vars then True else False
+      if null vars then allocaVar == sourceVarName
+                   else  allocaVar == sourceVarName || sourceVarName `elem` vars
 
 voidRetTyp :: AST.Type
-voidRetTyp = (AST.FunctionType AST.void [] False)
+voidRetTyp = AST.FunctionType AST.void [] False
 
 libcExit :: AST.Operand
 libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
@@ -160,9 +158,9 @@ getVarSource targetVarName = do
   where
     getSourceInfo (AST.DILocalVariable (AST.LocalVariable {..})) = do
       fileName' <- getFileName file
-      pure $ (show name, fileName', fromIntegral line)
+      pure (show name, fileName', fromIntegral line)
     findSourceVar vars =
-      let sourceVar = filter (\var -> var == targetVarName) vars in
+      let sourceVar = filter (== targetVarName) vars in
           case length sourceVar of
             0 -> False
             1 -> True
@@ -174,7 +172,7 @@ isDbgInstr (AST.Do AST.Call{function = func, arguments}) =
     Just name ->
       if name == "\"llvm.dbg.declare\""
          then
-           let (varMD, sourceMapMD) = (arguments !! 0, arguments !! 1)
+           let (varMD, sourceMapMD) = (head arguments, arguments !! 1)
                varName = getVarName varMD
             in do
            varInfo <- getVarInfo sourceMapMD
@@ -272,7 +270,7 @@ getMemAlloc (AST.Call {arguments, function = func}) =
 instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => G.Global -> m AST.Definition
 instrument f = do
   let bbs = G.basicBlocks f
-  if length bbs == 0
+  if null bbs
      then pure $ AST.GlobalDefinition f
      else do
        newBBs <- mapM filterDbgInstr bbs
@@ -356,7 +354,7 @@ defBoundChecker = mdo
 
   LLVM.function "boundAssertion" [arrSize, idx, line, col, fileName, varName, allocatedLine] AST.void body
     where
-      body (arrSize' : idx' : line' : col' : fileName' : varName' : allocatedLine' : []) =  mdo
+      body [arrSize', idx', line', col', fileName', varName', allocatedLine'] =  mdo
         outOfBoundAccess <- LLVM.icmp AST.SGT idx' arrSize'
         LLVM.condBr outOfBoundAccess panic ret
         panic <- LLVM.block `LLVM.named` "panic"
