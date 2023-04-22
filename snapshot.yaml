@@ -1,7 +1,7 @@
 resolver: lts-20.17
 
 packages:
-- url: https://github.com/christianlavoie/llvm-hs/archive/refs/heads/llvm-15.zip
+- url: https://github.com/llvm-hs/llvm-hs/archive/refs/heads/llvm-15.zip
   subdirs:
   - llvm-hs
   - llvm-hs-pure

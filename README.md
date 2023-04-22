@@ -13,3 +13,24 @@ Found out of bound access: ["int.c":10:20]:
          array length: 15, indexed by: 56
          variable name: "intarr", allocated at: 8
 ```
+
+# Environment (testing)
+- Local: Run `stack test`
+- Docker: Build a `Dockerfile` and runs `stack test` in the container
+- Git Action: Defined at `.github/workflows/ci.yml`
+I attempted to use nix-shell for the first time, but encountered an unknown error preventing the project from being compiled.
+Currently, the Docker container is being used as a substitute for the nix-shell environment.
+If you wish to contribute, please feel free to add a pull request for this solution. The script used is provided below:
+```
+with (import <nixpkgs> {});
+(mkShell {
+  buildInputs = [
+    cabal-install
+    stack
+    llvmPackages_15.llvm
+    ncurses
+    gmp
+    libxml2
+  ];
+})
+```
