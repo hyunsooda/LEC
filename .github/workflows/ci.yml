@@ -1,0 +1,38 @@
+name: Run CI
+run-name: ${{ github.actor }} is running module tests triggered by ${{github.event_name }} event.
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+jobs:
+  LEC-CI:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Package cache
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: ${{ runner.os }}-stack-${{ hashFiles('stack.yaml.lock', 'package.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-stack
+      - name: Install Dependencies (Stack, Cabal, and LLVM-15)
+        run: |
+          sudo apt-get update
+          sudo apt install lsb-release wget software-properties-common gnupg cabal-install -y
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 15
+      - name: Build Test
+        run: stack build
+      - name: Unit Test
+        run: |
+          export PATH=$PATH:/usr/lib/llvm-15/bin/
+          stack test
