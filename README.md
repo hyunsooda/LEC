@@ -5,7 +5,7 @@ This project draws inspiration from Golang and Rust, which offer similar securit
 
 # How to run
 Navigate to the `tests/inputs` directory and run the command `./compile.sh`. The generated files will have a `*.ll` extension and can be found in the same directory.
-To instrument the LLVM IR file `int.ll` with an out-of-bounds access checker and generate a new LLVM IR file named `output.ll`, run the following command: ```stack run -- lec -i tests/inputs/int.ll -o output.ll```.
+To instrument the LLVM IR file `int.ll` with an out-of-bounds access checker and generate a new LLVM IR file named `output.ll`, run the following command: ```./run.sh tests/inputs/int.ll output.ll```.
 To run the instrumented binary, execute the command ```lli output.ll```.
 The output is as follows:
 ```console
@@ -14,7 +14,7 @@ Found out of bound access: ["int.c":10:20]:
          variable name: "intarr", allocated at: 8
 ```
 
-# Environment (testing)
+# Environment
 - Local: Run `stack test`
 - Docker: Build a `Dockerfile` and runs `stack test` in the container
 - Git Action: Defined at `.github/workflows/ci.yml`
