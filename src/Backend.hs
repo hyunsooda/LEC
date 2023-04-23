@@ -29,6 +29,15 @@ import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
+defineGlobalStr :: (MonadIRBuilder m, MonadModuleBuilder m) => String -> String -> m C.Constant
+defineGlobalStr varName value = LLVM.globalStringPtr varName (AST.mkName value)
+
+emitGlobalAnsiStr :: (MonadIRBuilder m, MonadModuleBuilder m) => m ()
+emitGlobalAnsiStr = do
+  defineGlobalStr "B[37m" "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk" >>
+    defineGlobalStr "B[31m" "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk" >>
+      pure ()
+
 getName :: AST.Name -> String
 getName (AST.UnName a) = show a
 getName (AST.Name a) = show a
@@ -287,7 +296,7 @@ instrument f = do
 
 outOfBoundErrLogFormat :: IRBuilderT Env ()
 outOfBoundErrLogFormat =
-  let oobFormatter = [mtstr|Found out of bound access: [%s:%d:%d]
+  let oobFormatter = [mtstr|%sFound out of bound access: [%s:%d:%d]%s
     array length: %d, indexed by: %d
     variable name: %s, allocated at: %d
 |] in do
@@ -359,10 +368,13 @@ defBoundChecker = mdo
         LLVM.condBr outOfBoundAccess panic ret
         panic <- LLVM.block `LLVM.named` "panic"
         _ <- LLVM.call voidRetTyp libcPrintf [
+          -- TODO: Make `OUT_OF_BOUND_LOG_FORMAT` as global constant 
           (AST.ConstantOperand (C.GlobalReference (AST.Name "OUT_OF_BOUND_LOG_FORMAT")), []),
+          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
           (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
           (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
           (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
+          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
           (AST.LocalReference AST.ptr (getLocalOperandName arrSize'), []),
           (AST.LocalReference AST.ptr (getLocalOperandName idx'), []),
           (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),

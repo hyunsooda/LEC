@@ -67,7 +67,7 @@ outOfBoundChecker mod debug = do
   emitChecker funcNames
   mapM_ iterDef (reverse defs)
   ppSM  
-  outOfBoundErrLogFormat >> pure ()
+  emitGlobalAnsiStr >> outOfBoundErrLogFormat >> pure ()
   where
     iterDef (AST.GlobalDefinition f@(G.Function {})) = do
       updateIntMap f
