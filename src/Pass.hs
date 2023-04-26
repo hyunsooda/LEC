@@ -21,6 +21,8 @@ import LLVM.Internal.Module as LLVM
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 
+data FileTyp = BC | LL deriving Eq
+
 printErr :: String -> IO ()
 printErr err =
   setSGR [SetColor Foreground Vivid Red] >> print err >> setSGR [Reset]
@@ -37,28 +39,20 @@ runPass pass input mod debug = do
   mapM_ (\log -> if "ERROR: " `isPrefixOf` log then printErr log else putStrLn log) output
   return (mod { AST.moduleDefinitions = defs }, result)
 
-analyzeLL :: FilePath -> String -> Bool -> IO ()
-analyzeLL file outputPath debug = do
-  fcts <- readFile file
-  mod <- LLVM.withContext (\ctx -> do
-    LLVM.withModuleFromLLVMAssembly ctx fcts LLVM.moduleAST)
+analyze :: FileTyp -> FilePath -> String -> Bool -> IO ()
+analyze typ file outputPath debug = do
+  mod <- LLVM.withContext $ withModule typ
   (mod', _) <- runPass outOfBoundChecker [] mod debug
   LLVM.withContext $ \ctx ->
-    LLVM.withModuleFromAST
-    ctx
-    mod'
-    (\modl -> LLVM.writeLLVMAssemblyToFile (LLVM.File outputPath) modl)
-
-analyzeBC :: FilePath -> String -> Bool -> IO ()
-analyzeBC file outputPath debug = do
-  mod <- LLVM.withContext (\ctx -> do
-    LLVM.withModuleFromBitcode ctx (LLVM.File file) LLVM.moduleAST)
-  (mod', _) <- runPass outOfBoundChecker [] mod debug
-  LLVM.withContext $ \ctx ->
-    LLVM.withModuleFromAST
-    ctx
-    mod'
-    (\modl -> LLVM.writeBitcodeToFile (LLVM.File outputPath) modl)
+    LLVM.withModuleFromAST ctx mod' $ toFile typ
+  where
+    withModule LL ctx = do
+      fcts <- readFile file
+      LLVM.withModuleFromLLVMAssembly ctx fcts LLVM.moduleAST
+    withModule BC ctx =
+      LLVM.withModuleFromBitcode ctx (LLVM.File file) LLVM.moduleAST
+    toFile LL modl = LLVM.writeLLVMAssemblyToFile (LLVM.File outputPath) modl
+    toFile BC modl = LLVM.writeBitcodeToFile (LLVM.File outputPath) modl
 
 outOfBoundChecker :: AST.Module -> Bool -> IRBuilderT Env ()
 outOfBoundChecker mod debug = do
@@ -66,7 +60,7 @@ outOfBoundChecker mod debug = do
       funcNames = foldl getFuncNames [] defs
   emitChecker funcNames
   mapM_ iterDef (reverse defs)
-  ppSM  
+  ppSM
   emitGlobalAnsiStr >> outOfBoundErrLogFormat >> pure ()
   where
     iterDef (AST.GlobalDefinition f@(G.Function {})) = do
@@ -81,10 +75,10 @@ outOfBoundChecker mod debug = do
     emitChecker funcNames = do
       _ <- defBoundChecker
       unless ("\"exit\"" `elem` funcNames) $ emitLibcExit >> pure ()
-    
+
     getFuncNames acc (AST.GlobalDefinition (G.Function {..})) = getName name : acc
     getFuncNames acc _ = acc
-    
+
     -- print state map
     ppSM =
       when debug $ do
