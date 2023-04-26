@@ -14,6 +14,11 @@ Found out of bound access: ["int.c":10:20]:
          variable name: "intarr", allocated at: 8
 ```
 
+# Process
+To begin with, the target project is compiled with metadata information using the `-g` flag to generate LLVM IR.
+Then, the LEC analyzes the resulting IR files and adds instrumentation to enhance security.
+Finally, the new IR files are optimized and the metadata is stripped using the command `opt -O3 -strip-debug`.
+
 # Environment
 - Local: Run `stack test`
 - Docker: Build a `Dockerfile` and runs `stack test` in the container
