@@ -22,4 +22,6 @@ function modify_lec_global_string() {
 rm -rf $output
 stack run -- lec -i $input -o $output
 modify_lec_global_string
+sed -i '/optnone/d' $output
+opt -O3 -S -strip-debug $output -o $output
 lli $output
