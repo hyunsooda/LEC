@@ -13,7 +13,7 @@ import Type
 import Util
 
 import Data.Word (Word16, Word32)
--- import Data.Text.Lazy (unpack)
+import Data.Text.Lazy (unpack)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
 
@@ -30,8 +30,14 @@ import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
--- import LLVM.Pretty
--- import Debug.Trace
+import Prettyprinter hiding (line, line', column)
+import LLVM.Pretty
+import Debug.Trace
+
+panic :: (Monad m, Pretty a) => String -> a -> m b
+panic errStr expr = do
+  traceM $ unpack $ ppll expr
+  error errStr
 
 defineGlobalStr :: (MonadIRBuilder m, MonadModuleBuilder m) => String -> String -> m C.Constant
 defineGlobalStr varName value = LLVM.globalStringPtr varName (AST.mkName value)
@@ -59,11 +65,11 @@ constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
 
 getIntValue :: MonadState StateMap m => AST.Operand -> m Integer
 getIntValue c@(AST.ConstantOperand _) = pure $ constantToInt c
-getIntValue (AST.LocalReference _ name) = do
+getIntValue e@(AST.LocalReference _ name) = do
   memAllocPtrs <- gets intMap
   case M.lookup name memAllocPtrs of
     Just size -> pure size
-    _ -> error "ERR1"
+    _ -> panic "ERR1" e
 
 makeInt32Operand :: Integer -> AST.Operand
 makeInt32Operand n = AST.ConstantOperand (C.Int 32 n)
@@ -214,7 +220,7 @@ getElemPtrInstr acc instr@(_ AST.:= AST.GetElementPtr {..}) = do
         Nothing -> pure $ acc ++ [instr]
     _ -> pure $ acc ++ [instr]
   where
-    getIdx AST.IntegerType {} = getIntValue (head indices) 
+    getIdx AST.IntegerType {} = getIntValue (head indices)
     -- TODO: Consider multiple dimension
     getIdx AST.ArrayType {}   = getIntValue (last indices)
 getElemPtrInstr acc instr = pure $ acc ++ [instr]
@@ -230,7 +236,7 @@ updateIntMap f = do
         case ptr of
           Right size -> modify $ \sm -> sm { intMap =  M.insert varName size (intMap sm)}
           _ -> pure ()
-      updateVar (AST.Do AST.Store {..}) = do
+      updateVar expr@(AST.Do AST.Store {..}) = do
         memAllocPtrs <- gets intMap
         case (getOperandName address, getOperandName value) of
           (Just addrName, Just operandName) -> do
@@ -240,35 +246,35 @@ updateIntMap f = do
           (Just addrName, Nothing) -> do
             val <- getIntValue value
             modify $ \sm -> sm { intMap =  M.insert addrName val (intMap sm)}
-          _ -> error "ERR5"
+          _ -> panic "ERR5" expr
       updateVar (varName AST.:= AST.Alloca {..}) = do
         case allocatedType of
           AST.IntegerType {} -> initTaintList varName >> getElemLen varName numElements
           AST.PointerType {} -> initTaintList varName >> getElemLen varName numElements
           AST.ArrayType {..} -> do
-            initTaintList varName 
+            initTaintList varName
             modify $ \sm -> sm { intMap = M.insert varName (fromIntegral nArrayElements) (intMap sm)}
           _ -> pure ()
-      updateVar (varName AST.:= AST.Load {..}) = do
+      updateVar expr@(varName AST.:= AST.Load {..}) = do
         memAllocPtrs <- gets intMap
         case getOperandName address of
           Just addrName -> do
             case M.lookup addrName memAllocPtrs of
               Just size -> updateIntVal varName size >> updateTaintList addrName varName
               Nothing -> pure ()
-          _ -> error "ERR6"
-      updateVar (varName AST.:= AST.GetElementPtr {..}) = do
+          _ -> panic "ERR6" expr
+      updateVar expr@(varName AST.:= AST.GetElementPtr {..}) = do
         case getOperandName address of
           Just addrName -> updateTaintList addrName varName
-          _ -> error "ERR7"
-      updateVar (varName AST.:= AST.BitCast {..}) = do -- TODO: Refacotr me
+          _ -> panic "ERR7" expr
+      updateVar expr@(varName AST.:= AST.BitCast {..}) = do -- TODO: Refacotr me
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
-          _ -> error "ERR8"
-      updateVar (varName AST.:= AST.SExt{..}) = do -- TODO: Refactor me
+          _ -> panic "ERR8" expr
+      updateVar expr@(varName AST.:= AST.SExt{..}) = do -- TODO: Refactor me
         case getOperandName operand0 of
           Just operandName -> addToTracker varName operandName
-          _ -> error "ERR9"
+          _ -> panic "ERR9" expr
       updateVar (varName AST.:= AST.Mul{..}) = do -- TODO: Refactor me (consider variable * variable)
         lhs <- getIntValue operand0
         rhs <- getIntValue operand1
@@ -281,14 +287,14 @@ updateIntMap f = do
           Just val -> updateIntVal varName val >> updateTaintList operandName varName
           _ -> pure ()
 
-      getElemLen varName = \case 
+      getElemLen varName = \case
           Just c ->
             modify $ \sm -> sm { intMap = M.insert varName (constantToInt c) (intMap sm)}
           _ -> pure ()
 
 
 getMemAlloc :: (MonadState StateMap m) => AST.Instruction -> m (Either String Integer)
-getMemAlloc (AST.Call {arguments, function = func}) =
+getMemAlloc expr@(AST.Call {arguments, function = func}) =
   case func of
     Right (AST.ConstantOperand (C.GlobalReference (AST.Name funcName))) ->
       if funcName == "malloc"
@@ -297,7 +303,7 @@ getMemAlloc (AST.Call {arguments, function = func}) =
            pure $ Right val
          else pure $ Left "Error: Expected one argument"
     Left _ -> pure $ Left "Error: not a malloc"
-    _ -> error "ERR10"
+    _ -> panic "ERR10" expr
 
 
 instrument :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) => G.Global -> m AST.Definition

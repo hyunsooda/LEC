@@ -41,6 +41,7 @@ library:
     - containers
     - ansi-terminal
     - template-haskell
+    - prettyprinter
     - text
     - llvm-hs         >= 15
     - llvm-hs-pure    >= 15
