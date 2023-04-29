@@ -41,8 +41,10 @@ library:
     - containers
     - ansi-terminal
     - template-haskell
-    - llvm-hs       >= 15
-    - llvm-hs-pure  >= 15
+    - text
+    - llvm-hs         >= 15
+    - llvm-hs-pure    >= 15
+    - llvm-hs-pretty  >= 12
 
 executables:
   lec:

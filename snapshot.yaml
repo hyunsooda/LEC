@@ -5,3 +5,6 @@ packages:
   subdirs:
   - llvm-hs
   - llvm-hs-pure
+
+- url: https://github.com/hyunsooda/llvm-hs-pretty-15/archive/refs/heads/llvm-15.zip
+
