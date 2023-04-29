@@ -225,7 +225,6 @@ getElemPtrInstr acc instr@(_ AST.:= AST.GetElementPtr {..}) = do
     getIdx AST.ArrayType {}   = getIntValue (last indices)
 getElemPtrInstr acc instr = pure $ acc ++ [instr]
 
--- TODO: Move `updateVar` to top-level delaration
 updateIntMap :: MonadState StateMap m => G.Global -> m ()
 updateIntMap f = do
   forM_ (G.basicBlocks f) iterBB
