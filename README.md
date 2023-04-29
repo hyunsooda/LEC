@@ -3,6 +3,14 @@ The LEC (LLVM-Based Extended Compiler for Security Improvement) tool checks for 
 If such an access occurs at runtime, the instrumented program will crash and provide helpful debugging output, including variable name, index, array size, filename, and line number.
 This project draws inspiration from Golang and Rust, which offer similar security features as part of their official compiler foundations.
 
+# What is different with Address Sanitizer?
+1. Features
+    - TBD
+2. Performance
+    - Address Sanitizer (ASAN) inspects violations at runtime, while LEC builds its behavior at compile time with machine code. Therefore, LEC is much faster than ASAN.
+3. Report Quality
+    - Error localization with ASAN is extremely hard to figure out, whereas LEC provides another level of localization quality that assists developers in easily identifying them. Having explainable reporting is not only an important requirement but also crucial in finding bugs.
+
 # How to run
 Navigate to the `tests/inputs` directory and run the command `./compile.sh`. The generated files will have a `*.ll` extension and can be found in the same directory.
 To instrument the LLVM IR file `int.ll` with an out-of-bounds access checker and generate a new LLVM IR file named `output.ll`, run the following command: ```./run.sh tests/inputs/int.ll output.ll```.
