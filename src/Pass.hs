@@ -29,11 +29,11 @@ printErr err =
 
 runPass :: Pass a -> PassInput -> AST.Module -> Bool -> IO (AST.Module, a)
 runPass pass input mod debug = do
-  let haskellPassState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty, taintMap = M.empty }
+  let passInitState = StateMap { intMap = M.empty, debugMap = M.empty, sourceMap = M.empty, taintMap = M.empty }
   let irBuilderState = LLVM.emptyIRBuilder
   let modBuilderState = LLVM.emptyModuleBuilder
   let (((result, _), output), defs) = LLVM.runModuleBuilder modBuilderState $ do
-                              (\x -> evalRWST x input haskellPassState) $
+                              (\x -> evalRWST x input passInitState) $
                                 runIRBuilderT irBuilderState $ pass mod debug
 
   mapM_ (\log -> if "ERROR: " `isPrefixOf` log then printErr log else putStrLn log) output
