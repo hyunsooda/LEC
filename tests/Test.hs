@@ -7,8 +7,15 @@ import OOB
 import CFGSpec
 import MetadataSpec
 
+import System.Process
+
+compile :: IO ()
+compile = callCommand "cd tests/inputs; ./compile.sh"
+
 main :: IO ()
 main = do
+  compile
+
   oobBasicTest <- oobBasic
   cfgBasicTest <- cfgBasic
   cfgTermTest <- cfgTerm
