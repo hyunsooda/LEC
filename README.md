@@ -3,6 +3,12 @@ The LEC (LLVM-Based Extended Compiler for Security Improvement) tool checks for 
 If such an access occurs at runtime, the instrumented program will crash and provide helpful debugging output, including variable name, index, array size, filename, and line number.
 This project draws inspiration from Golang and Rust, which offer similar security features as part of their official compiler foundations.
 
+# Currently supported checker lists
+- OOB checker (Out-of-bound checker)
+    - It effectively identifies out-of-bounds access during runtime, such as buffer overrun in a static array or dynamically allocated memory.
+- Uninitialized map access checker
+    - It accurately detects attempts to access uninitialized STL maps during runtime.
+
 # What is different with Address Sanitizer?
 1. Features
     - TBD
