@@ -1,3 +1,0 @@
-B[31mFound out of bound access: ["static-arr2.c":6:20]B[37m
-    array length: 1, indexed by: 13
-    variable name: "arr", allocated at: 5
