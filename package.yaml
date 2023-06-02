@@ -21,16 +21,17 @@ default-extensions: RecordWildCards
 
 dependencies: base >= 4.7 && < 5
 
-ghc-options:
-  - -Wall
-  - -Werror
-  - -Wcompat
-  - -Widentities
-  - -Wincomplete-uni-patterns
-  - -Wno-unused-top-binds
-  - -Wno-orphans
-  - -Wno-incomplete-patterns
-  - -Wno-incomplete-record-updates
+# TODO: Uncomment this flags once the implementation is reliable. For a while, these are off for easier and faster developement
+# ghc-options:
+#   - -Wall
+#   - -Werror
+#   - -Wcompat
+#   - -Widentities
+#   - -Wincomplete-uni-patterns
+#   - -Wno-unused-top-binds
+#   - -Wno-orphans
+#   - -Wno-incomplete-patterns
+#   - -Wno-incomplete-record-updates
 
 library:
   source-dirs: src
@@ -45,7 +46,8 @@ library:
     - text
     - llvm-hs         >= 15
     - llvm-hs-pure    >= 15
-    - llvm-hs-pretty  >= 12
+    - llvm-hs-pretty  >= 15
+    - cppfilt
 
 executables:
   lec:
@@ -58,10 +60,12 @@ executables:
 
 tests:
   oob:
-    main: OOB.hs
+    main: Test.hs
     source-dirs: tests
-    other-modules: []
     dependencies:
+      - mtl
+      - bytestring
+      - containers
       - process
       - filepath
       - text
@@ -69,4 +73,9 @@ tests:
       - tasty
       - tasty-hunit
       - tasty-golden
+      - tasty-hspec
+      - hspec
+      - llvm-hs-pure    >= 15
+      - llvm-hs-pretty  >= 15
+      - cppfilt
       - LEC
