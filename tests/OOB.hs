@@ -1,4 +1,4 @@
-module Main where
+module OOB where
 
 import System.Exit
 import System.Process (callCommand, readProcessWithExitCode)
@@ -11,15 +11,6 @@ import Test.Tasty.Golden
 
 import Pass
 
-main :: IO ()
-main = do
-  callCommand "cd tests/inputs; ./compile.sh"
-  gt <- goldenTests
-  defaultMain gt
-
-goldenTests :: IO TestTree
-goldenTests = testGroup "C-OOB" <$> sequence [basic]
-
 runFile :: FilePath -> IO String
 runFile file = do
   analyze LL file outputFile False
@@ -29,9 +20,9 @@ runFile file = do
   pure stdout'
     where outputFile = "output.ll"
 
-basic :: IO TestTree
-basic = do
-  cFiles <- findByExtension [".ll"] "tests/inputs"
+oobBasic :: IO TestTree
+oobBasic = do
+  cFiles <- findByExtension [".ll"] "tests/inputs/OOB"
   pure $ testGroup
     "basic"
     [ goldenVsString (takeBaseName file) outFile (cs <$> runFile file)
