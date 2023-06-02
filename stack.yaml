@@ -10,3 +10,6 @@ flags:
 
 ghc-options:
   llvm-hs: -optcxx=-std=c++14 -optcxx=-lstdc++ -optcxx=-fno-rtti
+
+extra-deps:
+  - 'cppfilt-0.1.0.0'
