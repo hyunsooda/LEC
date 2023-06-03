@@ -1,6 +1,8 @@
 #!/bin/bash
 
 dirs_cmd=`ls -d */`
+compile_flag="-Wno-everything -g -S -emit-llvm"
+
 dirs=($dirs_cmd)
 for dir in "${dirs[@]}"; do
     pushd $dir
@@ -11,10 +13,10 @@ for dir in "${dirs[@]}"; do
     cpp=($cppFiles)
 
     for file in "${cc[@]}"; do
-        clang -g -S -emit-llvm $file
+        clang $compile_flag $file
     done
     for file in "${cpp[@]}"; do
-        clang++ -g -S -emit-llvm $file
+        clang++ $compile_flag $file
     done
 
     popd
