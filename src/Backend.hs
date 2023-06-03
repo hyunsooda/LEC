@@ -120,6 +120,9 @@ libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
 emitLibcExit :: MonadModuleBuilder m => m AST.Operand
 emitLibcExit = LLVM.extern (AST.Name "exit") [AST.i32] AST.void
 
+emitLibcPrintf :: MonadModuleBuilder m => m AST.Operand
+emitLibcPrintf = LLVM.extern (AST.Name "printf") [AST.i32] AST.void
+
 emitIntMapCount :: MonadModuleBuilder m => m AST.Operand
 emitIntMapCount = LLVM.extern (AST.Name "_ZNKSt3mapIiiSt4lessIiESaISt4pairIKiiEEE5countERS3_") [AST.ptr, AST.ptr] AST.i64
 
@@ -241,7 +244,7 @@ installAssertT ctxName term@(varName AST.:= AST.Invoke { function' = func, .. })
          else pure Nothing
 
     getArgs [(arg1, _), (arg2, _)] = (arg1, arg2)
-    
+
 installAssertT _ _ = pure Nothing
 
 updateIntMap :: MonadState StateMap m => AST.Global -> m ()

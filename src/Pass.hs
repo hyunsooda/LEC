@@ -86,8 +86,7 @@ outOfBoundChecker mod debug = do
 
   ppSM
   emitGlobalAnsiStr >> outOfBoundErrAssertFmt >> mapKeyExistAssertFmt
-  emitBoundAssertion funcNames
-  emitMapUninitChecker
+  emitLibC funcNames >> emitBoundAssertion >> emitMapUninitChecker
   pure ()
   where
     iterDef d@(AST.GlobalDefinition f@(AST.Function {..})) =
@@ -99,21 +98,23 @@ outOfBoundChecker mod debug = do
 
     -- emit everything except for the functions that have basic blocks
     emitBase d@(AST.GlobalDefinition f@(AST.Function {..})) =
-      if null basicBlocks then LLVM.emitDefn d else pure () 
+      if null basicBlocks then LLVM.emitDefn d else pure ()
     emitBase d = LLVM.emitDefn d
 
     initDebugInfo d@(AST.MetadataNodeDefinition nodeId mdNode) =
       modify $ \sm -> sm { debugMap = M.insert nodeId mdNode (debugMap sm) }
     initDebugInfo _ = pure ()
 
-    emitBoundAssertion funcNames = do
-      _ <- defBoundChecker
+    emitLibC funcNames = do
       unless ("exit" `elem` funcNames) $ emitLibcExit >> pure ()
+      unless ("printf" `elem` funcNames) $ emitLibcPrintf >> pure ()
+
+    emitBoundAssertion = defBoundChecker
 
     emitMapUninitChecker = do
-      countFns <- findMapCountFns 
+      countFns <- findMapCountFns
       mapM_ defMapUninitChecker countFns
-  
+
     getFuncNames acc (AST.GlobalDefinition (AST.Function {..})) = getName name : acc
     getFuncNames acc _ = acc
 
