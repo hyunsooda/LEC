@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Pass where
 
@@ -9,22 +10,31 @@ import CFG
 import Backend
 import Metadata
 
+import System.Demangle.Pure (demangle)
 import System.Console.ANSI
 import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void, pass)
+import Data.Maybe (fromJust)
 import qualified Data.Map as M
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, isInfixOf, findIndex)
 
-import qualified LLVM.AST as AST
-import qualified LLVM.AST.Global as AST
+import qualified LLVM.AST as AST hiding (callingConvention, returnAttributes, functionAttributes, alignment, metadata)
+import qualified LLVM.AST.Type as AST
+import qualified LLVM.AST.Instruction as AST
+import qualified LLVM.AST.CallingConvention as AST
+import qualified LLVM.AST.Constant as AST
+import qualified LLVM.AST.Global as G
 
 import LLVM.Internal.Context as LLVM
 import LLVM.Internal.Module as LLVM
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
+import LLVM.IRBuilder.Instruction as LLVM
 
 import Control.Monad.Identity
 import System.IO.Unsafe
+
+import Debug.Trace
 
 instance MonadIO Identity where
   liftIO = Identity . unsafePerformIO
@@ -87,9 +97,62 @@ outOfBoundChecker mod debug = do
   ppSM
   emitGlobalAnsiStr >> outOfBoundErrAssertFmt >> mapKeyExistAssertFmt
   emitLibC funcNames >> emitBoundAssertion >> emitMapUninitChecker
+
   pure ()
   where
-    iterDef d@(AST.GlobalDefinition f@(AST.Function {..})) =
+    findBBIdxEMplaceHintUniq bbs = find bbs 0 Nothing
+      where
+        find ((AST.BasicBlock name instrs term) : residual) idx Nothing =
+          case findIndex aux instrs of
+            Just _ -> Just idx
+            _ -> find residual (idx + 1) Nothing
+
+        aux (_ AST.:= AST.Call {..}) =
+          let fnNm = fromJust . getFuncName $ function
+              demangled = fromJust . demangle $ fnNm
+           in
+          "_M_emplace_hint_unique" `isInfixOf` demangled
+        aux _ = False
+
+    replaceBB2Panic (AST.BasicBlock name _ _) =
+      AST.BasicBlock name [reportCall, exitCall] term
+      where
+        reportCall = AST.Do AST.Call {
+          AST.tailCallKind = Nothing
+        , AST.callingConvention = AST.C
+        , AST.returnAttributes = []
+        , AST.type' = voidRetTyp
+        , AST.function = Right libcPrintf
+        , AST.arguments =
+          [ (AST.ConstantOperand (AST.GlobalReference (AST.Name "MAP_UNINIT_ACCESS_ASSERT_FMT")), [])
+          , (AST.ConstantOperand (AST.GlobalReference (AST.Name "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk")), [])
+          , (AST.LocalReference AST.ptr (AST.mkName "fileName"), [])
+          , (AST.LocalReference AST.ptr (AST.mkName "line"), [])
+          , (AST.LocalReference AST.ptr (AST.mkName "col"), [])
+          , (AST.ConstantOperand (AST.GlobalReference (AST.Name "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk")), [])
+          , (AST.LocalReference AST.ptr (AST.mkName "varName"), [])
+          , (AST.LocalReference AST.ptr (AST.mkName "keyName"), [])
+          ]
+        , AST.functionAttributes = []
+        , AST.metadata = []
+        }
+        exitCall = AST.Do AST.Call {
+          AST.tailCallKind = Nothing
+        , AST.callingConvention = AST.C
+        , AST.returnAttributes = []
+        , AST.type' = voidRetTyp
+        , AST.function = Right libcExit
+        , AST.arguments = [(makeInt32Operand 1, [])]
+        , AST.functionAttributes = []
+        , AST.metadata = []
+        }
+        term = AST.Do AST.Ret {
+          AST.returnOperand = Just $ AST.ConstantOperand (AST.Null AST.ptr)
+        , AST.metadata' = []
+        }
+
+
+    iterDef d@(AST.GlobalDefinition f@(AST.Function {..})) = do
       when (not . null $ basicBlocks) $ do
         updateIntMap f                -- step1 (pre-analysis)
         instrumented <- instrument f  -- step2 (emitting final code)
@@ -112,8 +175,43 @@ outOfBoundChecker mod debug = do
     emitBoundAssertion = defBoundChecker
 
     emitMapUninitChecker = do
-      countFns <- findMapCountFns
-      mapM_ defMapUninitChecker countFns
+      accessFnStrs <- findMapAccessFnStrs
+      mapM_ emitChecker accessFnStrs
+
+      where
+        emitChecker fnStr = do
+          fn <- getFunc fnStr
+          case fn of
+            Just fn' -> do
+              def <- defChecker fn'
+              LLVM.emitDefn def
+            Nothing -> pure ()
+
+        defChecker f@(AST.Function { .. }) = do
+          let bbIdx = fromJust . findBBIdxEMplaceHintUniq $ basicBlocks
+              panicBB = replaceBB2Panic (basicBlocks !! bbIdx)
+              bbs = map filterDbgInstr basicBlocks
+              (bbs1, _:bbs2) = splitAt bbIdx bbs
+              newBBs = bbs1 ++ [panicBB] ++ bbs2
+              newFn = AST.GlobalDefinition $ f {
+                G.name = AST.mkName "LEC_uninitMapAccessChecker"
+              , G.parameters = ([
+                  (fst parameters) !! 0
+                , (fst parameters) !! 1
+                , AST.Parameter AST.ptr (AST.mkName "line") []
+                , AST.Parameter AST.ptr (AST.mkName "col") []
+                , AST.Parameter AST.ptr (AST.mkName "fileName") []
+                , AST.Parameter AST.ptr (AST.mkName "varName") []
+                , AST.Parameter AST.ptr (AST.mkName "keyName") []
+                ], False)
+              , G.basicBlocks = newBBs
+              , G.metadata = []
+              }
+           in
+           pure newFn
+
+        filterDbgInstr (AST.BasicBlock name instrs term) =
+          AST.BasicBlock name (filter isNotDebugInstr instrs) term
 
     getFuncNames acc (AST.GlobalDefinition (AST.Function {..})) = getName name : acc
     getFuncNames acc _ = acc
