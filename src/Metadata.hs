@@ -13,6 +13,7 @@ import Data.List (isPrefixOf, isInfixOf, sort)
 import Data.Word (Word16, Word32)
 import Data.Maybe (isJust, fromJust)
 import Data.Text.Lazy (unpack)
+import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
 
@@ -60,6 +61,21 @@ findMapCountFns = do
           Nothing -> False
       isMapCountFn fnNm =
         "std::map<" `isPrefixOf` fnNm && "::count(" `isInfixOf` fnNm
+
+findMapTmplFn :: MonadState StateMap m => String -> m ([AST.Name])
+findMapTmplFn targetFnNm = do
+  dm <- gets demangledFuncMap
+  pure . M.elems $ M.filter isAccessFn dm
+    where
+      isAccessFn nm = 
+        case demangle . getName $ nm of
+          Just demangled -> strCmp demangled
+          Nothing -> False
+      strCmp fnFullNm =
+        "std::map<" `isPrefixOf` fnFullNm && ("::" ++ targetFnNm) `isInfixOf` fnFullNm
+
+findMapAccessFnStrs :: MonadState StateMap m => m ([AST.Name])
+findMapAccessFnStrs = findMapTmplFn "operator[]"
 
 getOperandName :: AST.Operand -> Maybe AST.Name
 getOperandName (AST.LocalReference _ varName) = Just varName
