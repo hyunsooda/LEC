@@ -7,7 +7,6 @@ int main() {
     map<string, float> thisismymap;
     thisismymap["123"] = 999.99;
     float v = thisismymap["123"];
-    int key_cnt = thisismymap.count("456");
 
     int a = 123;
     if (a == 123) {

@@ -1,2 +1,2 @@
-B[31mFound unitialized key access: ["strmap.cpp":19:16]B[37m
+B[31mFound unitialized key access: ["strmap.cpp":18:16]B[37m
     variable name: "thisismymap", allocated at: 7
