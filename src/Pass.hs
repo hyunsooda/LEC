@@ -151,12 +151,20 @@ outOfBoundChecker mod debug = do
         , AST.metadata' = []
         }
 
-
-    iterDef d@(AST.GlobalDefinition f@(AST.Function {..})) = do
+    iterDef (AST.GlobalDefinition f@(AST.Function {..})) = do
       when (not . null $ basicBlocks) $ do
         updateIntMap f                -- step1 (pre-analysis)
         instrumented <- instrument f  -- step2 (emitting final code)
         LLVM.emitDefn instrumented
+
+    -- Add global variable debug information
+    iterDef (AST.GlobalDefinition g@(AST.GlobalVariable {..})) = do
+      if not . null $ metadata then do
+        varInfo <- getGlobalVarInfo $ snd . head $ metadata
+        addVarInfo name varInfo
+      else
+        pure ()
+
     iterDef _ = pure ()
 
     -- emit everything except for the functions that have basic blocks

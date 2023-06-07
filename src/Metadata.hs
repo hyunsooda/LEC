@@ -17,7 +17,7 @@ import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
 
-import qualified LLVM.AST as AST
+import qualified LLVM.AST as AST hiding (GlobalVariable)
 import qualified LLVM.AST.Type as AST
 import qualified LLVM.AST.CallingConvention as AST
 import qualified LLVM.AST.IntegerPredicate as AST
@@ -35,9 +35,9 @@ addDemangledFnStr (AST.GlobalDefinition (G.Function {..})) = do
   dm <- gets demangledFuncMap
   -- Sometimes, type string may differ, while keeping the semantic
   -- e.g., `const int` and `int const`
-  -- Thus, the key is sorted name of demangled 
+  -- Thus, the key is sorted name of demangled
   modify $ \sm -> sm { demangledFuncMap = M.insert (sort demangled) name dm }
-    where 
+    where
       fnNm = getName name
       demangled = case demangle fnNm of
                     Just d -> d
@@ -48,14 +48,14 @@ addDemangledFnStr _ = pure ()
 getDemangledFnStr :: MonadState StateMap m => String -> m (Maybe AST.Name)
 getDemangledFnStr nm = do
   dm <- gets demangledFuncMap
-  pure $ M.lookup (sort nm) dm 
+  pure $ M.lookup (sort nm) dm
 
 findMapCountFns :: MonadState StateMap m => m ([AST.Name])
 findMapCountFns = do
   dm <- gets demangledFuncMap
   pure . M.elems $ M.filter isCountFn dm
     where
-      isCountFn nm = 
+      isCountFn nm =
         case demangle . getName $ nm of
           Just demangled -> isMapCountFn demangled
           Nothing -> False
@@ -67,7 +67,7 @@ findMapTmplFn targetFnNm = do
   dm <- gets demangledFuncMap
   pure . M.elems $ M.filter isAccessFn dm
     where
-      isAccessFn nm = 
+      isAccessFn nm =
         case demangle . getName $ nm of
           Just demangled -> strCmp demangled
           Nothing -> False
@@ -104,16 +104,19 @@ getVarSource targetVarName = do
 
   if not . null $ sourceVar then
     let (sourceVarName, _) =  M.elemAt 0 sourceVar
-        source = (M.!) sourceInfo sourceVarName 
+        source = (M.!) sourceInfo sourceVarName
      in
     getSourceInfo source
   else
-    let source = fromJust $ M.lookup targetVarName sourceInfo 
+    let source = fromJust $ M.lookup targetVarName sourceInfo
      in
     getSourceInfo source
 
-  where 
+  where
     getSourceInfo (AST.DILocalVariable (AST.LocalVariable {..})) = do
+      fileName' <- getFileName file
+      pure (show name, fileName', fromIntegral line)
+    getSourceInfo (AST.DIGlobalVariable (AST.GlobalVariable {..})) = do
       fileName' <- getFileName file
       pure (show name, fileName', fromIntegral line)
     findSourceVar var referVars =
@@ -171,7 +174,7 @@ getFnTyps AST.Function {..} = do
           where
             fnTypList (AST.DINode (AST.DIScope (AST.DIType (AST.DISubroutineType (AST.SubroutineType {..}))))) =
               let typList = filter isJust typeArray
-               in 
+               in
               map fromJust typList
 
 getMDLocation :: AST.MDNode -> (Word32, Word16, AST.MDRef AST.DILocalScope)
@@ -185,6 +188,16 @@ getVarInfo (AST.MetadataOperand (AST.MDNode mdRef), _) = do
   md <- getMD mdRef
   pure $ diVar md
     where diVar (AST.DINode var) = var
+
+getGlobalVarInfo :: MonadState StateMap m => AST.MDRef a -> m AST.DINode
+getGlobalVarInfo mdRef = do
+  md <- getMD mdRef
+  diGlovalVar md
+    where
+      diGlovalVar (AST.DIGlobalVariableExpression (AST.GlobalVariableExpression {..})) = do
+        md <- getMD var
+        diVar md
+      diVar (AST.DINode gVar) = pure gVar
 
 addVarInfo :: MonadState StateMap m => AST.Name -> AST.DINode -> m ()
 addVarInfo name (AST.DIVariable var) = do
