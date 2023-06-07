@@ -44,6 +44,7 @@ library:
     - template-haskell
     - prettyprinter
     - text
+    - split
     - llvm-hs         >= 15
     - llvm-hs-pure    >= 15
     - llvm-hs-pretty  >= 15
