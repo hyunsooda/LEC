@@ -114,6 +114,9 @@ voidRetTyp = AST.FunctionType AST.void [] False
 i64RetTyp :: AST.Type
 i64RetTyp = AST.FunctionType AST.i64 [] False
 
+ptrRetTyp :: AST.Type
+ptrRetTyp = AST.FunctionType AST.ptr [] False
+
 libcExit :: AST.Operand
 libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
 
@@ -132,21 +135,26 @@ libcPrintf = AST.ConstantOperand (C.GlobalReference (AST.Name "printf"))
 getGlobalFuncOp :: AST.Name -> AST.Operand
 getGlobalFuncOp nm = AST.ConstantOperand (C.GlobalReference nm)
 
-isNotDebugInstr :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
-isNotDebugInstr (AST.Do AST.Call{function = func, arguments}) =
-  case getFuncName func of
+isNotDebugInstr :: AST.Named AST.Instruction -> Bool
+isNotDebugInstr (AST.Do AST.Call{..}) =
+  case getFuncName function of
     Just name ->
-      if name == "llvm.dbg.declare"
-         then
-           let (varMD, sourceMapMD) = (head arguments, arguments !! 1)
-               varName = getVarName varMD
-            in do
-           varInfo <- getVarInfo sourceMapMD
-           addVarInfo varName varInfo
-           pure False
-         else pure True
-    _ -> pure True
-isNotDebugInstr _ = pure True
+      if name == "llvm.dbg.declare" then False else True
+    _ -> True
+isNotDebugInstr _ = True
+
+filterDebugInfo :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
+filterDebugInfo instr@(AST.Do AST.Call{function = func, arguments}) = do
+  if (not . isNotDebugInstr $ instr) then
+    let (varMD, sourceMapMD) = (head arguments, arguments !! 1)
+        varName = getVarName varMD
+      in do
+     varInfo <- getVarInfo sourceMapMD
+     addVarInfo varName varInfo
+     pure False
+  else
+    pure True
+filterDebugInfo _ = pure True
 
 installAssertI ::
   (MonadIO m, MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
@@ -338,7 +346,7 @@ instrument f@(AST.Function { name = fn }) = do
        pure $ AST.GlobalDefinition $ f { AST.basicBlocks = instrumented }
   where
     filterDbgInstr (AST.BasicBlock name instrs term) = do
-      newInstrs <- filterM isNotDebugInstr instrs
+      newInstrs <- filterM filterDebugInfo instrs
       pure $ AST.BasicBlock name newInstrs term
 
     addBoundAssert (AST.BasicBlock name instrs term) = do
@@ -383,66 +391,19 @@ callMapUninitChecker mapObj key metadata = do
         tailCallKind = Nothing,
         AST.callingConvention = AST.C,
         AST.returnAttributes = [],
-        AST.type' = i64RetTyp,
-        AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_callMapCnt"))),
+        AST.type' = ptrRetTyp,
+        AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_uninitMapAccessChecker"))),
+        -- AST.arguments = [(mapObj, []), (key, [])],
         AST.arguments = [
           (mapObj, []), (key, []),
           (accessLine', []), (accessCol', []),
           (AST.ConstantOperand accessFileName', []),
           (AST.ConstantOperand varName', []), (allocatedLine', [])
         ],
+
         AST.functionAttributes = [],
         AST.metadata = []
       }
-
-defMapUninitChecker :: AST.Name -> IRBuilderT Env AST.Operand
-defMapUninitChecker funcNm = mdo
--- defMapUninitChecker :: (MonadIO m, MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
---   AST.Name -> m (IRBuilderT Env AST.Operand)
--- defMapUninitChecker funcNm = mdo
-
--- define void @LEC_callMapCnt(ptr %mapObj_0, ptr %key_0, i32 %line_0, i32 %col_0, ptr %fileName_0) {
---   %1 = call i64 @_ZNKSt3mapIiiSt4lessIiESaISt4pairIKiiEEE5countERS3_(ptr %mapObj_0, ptr %key_0)
---   %2 = icmp eq i64 %1, 0
---   br i1 %2, label %panic_0, label %ret_0
-
--- panic_0:                                          ; preds = %0
---   call void @printf(ptr @MAP_UNINIT_ACCESS_ASSERT_FMT, ptr @LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk, ptr %fileName_0, i32 %line_0, i32 %col_0)
---   call void @exit(i32 1)
---   ret void
-
--- ret_0:                                            ; preds = %0
---   ret void
-
-  let mapObj = (AST.ptr, LLVM.ParameterName "mapObj")
-      key = (AST.ptr, LLVM.ParameterName "key")
-      line = (AST.i32, LLVM.ParameterName "line")
-      col = (AST.i32, LLVM.ParameterName "col")
-      fileName = (AST.ptr, LLVM.ParameterName "fileName")
-      varName = (AST.ptr, LLVM.ParameterName "varName")
-      keyName = (AST.ptr, LLVM.ParameterName "keyName")
-  LLVM.function "LEC_callMapCnt" [mapObj, key, line, col, fileName, varName, keyName] AST.void body
-    where
-      zero = makeInt64Operand 0
-      body [mapObj', key', line', col', fileName', varName', keyName'] = mdo
-        keyCount <- LLVM.call i64RetTyp (getGlobalFuncOp funcNm) [
-          (AST.LocalReference AST.ptr (getLocalOperandName mapObj'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName key'), [])]
-        isCountZero <- LLVM.icmp AST.EQ keyCount zero
-        LLVM.condBr isCountZero panic ret
-        panic <- LLVM.block `LLVM.named` "panic"
-        _ <- LLVM.call voidRetTyp libcPrintf [
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "MAP_UNINIT_ACCESS_ASSERT_FMT")), []),
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName keyName'), [])]
-        _ <- LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
-        ret <- LLVM.block `LLVM.named` "ret"
-        pure ()
 
 callBoundAssert
   :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>

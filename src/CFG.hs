@@ -5,7 +5,6 @@ module CFG where
 import Type
 import Util
 
-import System.Demangle.Pure (demangle)
 import Data.List (elemIndex)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
