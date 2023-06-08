@@ -13,6 +13,7 @@ import Type
 import CFG
 import Metadata
 import Util
+import Emit
 
 import System.Demangle.Pure (demangle)
 import Data.ByteString.Short (ShortByteString)
@@ -29,7 +30,6 @@ import qualified LLVM.AST.CallingConvention as AST
 import qualified LLVM.AST.IntegerPredicate as AST
 import qualified LLVM.AST.Global as AST
 import qualified LLVM.AST.Operand as AST hiding (PointerType)
-
 import qualified LLVM.AST.Constant as C
 
 import LLVM.IRBuilder.Monad as LLVM
@@ -45,18 +45,6 @@ panic errStr expr = do
   traceM $ unpack $ ppll expr
   error errStr
 
-defineGlobalStr :: (MonadIRBuilder m, MonadModuleBuilder m) => String -> String -> m C.Constant
-defineGlobalStr varName value = LLVM.globalStringPtr varName (AST.mkName value)
-
-emitGlobalAnsiStr :: (MonadIRBuilder m, MonadModuleBuilder m) => m ()
-emitGlobalAnsiStr = do
-  defineGlobalStr "B[37m" "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk" >>
-    defineGlobalStr "B[31m" "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk" >>
-      pure ()
-
-getLocalOperandName :: AST.Operand -> AST.Name
-getLocalOperandName (AST.LocalReference _ varName) = varName
-
 constantToInt :: AST.Operand -> Integer
 constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
 constantToInt (AST.ConstantOperand (C.Null {})) = 0
@@ -69,15 +57,6 @@ getIntValue e@(AST.LocalReference _ name) = do
   case M.lookup name memAllocPtrs of
     Just size -> pure size
     _ -> panic "ERR1" e
-
-makeInt32Operand :: Integer -> AST.Operand
-makeInt32Operand n = AST.ConstantOperand (C.Int 32 n)
-
-makeInt64Operand :: Integer -> AST.Operand
-makeInt64Operand n = AST.ConstantOperand (C.Int 64 n)
-
-getVoidOperand :: AST.Operand
-getVoidOperand = AST.ConstantOperand (C.Null AST.void)
 
 typeSize :: AST.Type -> Either String Int
 typeSize typ = case typ of
@@ -107,30 +86,6 @@ updateTaintList sourceVarName varName = do
     findVar allocaVar vars =
       if null vars then allocaVar == sourceVarName
                    else  allocaVar == sourceVarName || sourceVarName `elem` vars
-
-voidRetTyp :: AST.Type
-voidRetTyp = AST.FunctionType AST.void [] False
-
-i64RetTyp :: AST.Type
-i64RetTyp = AST.FunctionType AST.i64 [] False
-
-ptrRetTyp :: AST.Type
-ptrRetTyp = AST.FunctionType AST.ptr [] False
-
-libcExit :: AST.Operand
-libcExit = AST.ConstantOperand (C.GlobalReference (AST.Name "exit"))
-
-emitLibcExit :: MonadModuleBuilder m => m AST.Operand
-emitLibcExit = LLVM.extern (AST.Name "exit") [AST.i32] AST.void
-
-emitLibcPrintf :: MonadModuleBuilder m => m AST.Operand
-emitLibcPrintf = LLVM.extern (AST.Name "printf") [AST.i32] AST.void
-
-emitIntMapCount :: MonadModuleBuilder m => m AST.Operand
-emitIntMapCount = LLVM.extern (AST.Name "_ZNKSt3mapIiiSt4lessIiESaISt4pairIKiiEEE5countERS3_") [AST.ptr, AST.ptr] AST.i64
-
-libcPrintf :: AST.Operand
-libcPrintf = AST.ConstantOperand (C.GlobalReference (AST.Name "printf"))
 
 getGlobalFuncOp :: AST.Name -> AST.Operand
 getGlobalFuncOp nm = AST.ConstantOperand (C.GlobalReference nm)
@@ -355,118 +310,3 @@ instrument f@(AST.Function { name = fn }) = do
       case termWithassert of
         Just termAssert -> pure $ AST.BasicBlock name (instrWithAssert ++ [termAssert]) term
         Nothing    -> pure $ AST.BasicBlock name instrWithAssert term
-
-outOfBoundErrAssertFmt :: IRBuilderT Env ()
-outOfBoundErrAssertFmt =
-  let oobFormatter = [mtstr|%sFound out of bound access: [%s:%d:%d]%s
-    array length: %d, indexed by: %d
-    variable name: %s, allocated at: %d
-|] in do
-  defineGlobalStr oobFormatter "OUT_OF_BOUND_ASSERT_FMT" >> pure ()
-
-mapKeyExistAssertFmt :: IRBuilderT Env ()
-mapKeyExistAssertFmt =
-  let oobFormatter = [mtstr|%sFound unitialized key access: [%s:%d:%d]%s
-    variable name: %s, allocated at: %d
-|] in do
-  defineGlobalStr oobFormatter "MAP_UNINIT_ACCESS_ASSERT_FMT" >> pure ()
-
-callMapUninitChecker
-  :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
-    AST.Operand
-    -> AST.Operand
-    -> [(a1, AST.MDRef a2)]
-    -> m (AST.Named AST.Instruction)
-callMapUninitChecker mapObj key metadata = do
-  (varName, _, allocatedLine) <- getVarSource (fromJust . getOperandName $ mapObj)
-  (accessFileName, _, accessLine, accessCol) <- getMDScope metadata
-  let accessLine' = makeInt32Operand accessLine
-      accessCol' = makeInt32Operand accessCol
-      allocatedLine' = makeInt32Operand allocatedLine
-   in do
-     accessFileName' <- LLVM.globalStringPtr accessFileName (AST.Name "FILE_NAME")
-     varName' <- LLVM.globalStringPtr varName (AST.Name "VAR_NAME")
-     pure $ AST.Do
-       AST.Call {
-        tailCallKind = Nothing,
-        AST.callingConvention = AST.C,
-        AST.returnAttributes = [],
-        AST.type' = ptrRetTyp,
-        AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_uninitMapAccessChecker"))),
-        -- AST.arguments = [(mapObj, []), (key, [])],
-        AST.arguments = [
-          (mapObj, []), (key, []),
-          (accessLine', []), (accessCol', []),
-          (AST.ConstantOperand accessFileName', []),
-          (AST.ConstantOperand varName', []), (allocatedLine', [])
-        ],
-
-        AST.functionAttributes = [],
-        AST.metadata = []
-      }
-
-callBoundAssert
-  :: (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
-    Integer
-    -> Integer
-    -> AST.Name
-    -> [(a1, AST.MDRef a2)]
-    -> m (AST.Named AST.Instruction)
-callBoundAssert arrSize idx targetAddrName metadata = do
-  (varName, _, allocatedLine) <- getVarSource targetAddrName
-  (accessFileName, _, accessLine, accessCol) <- getMDScope metadata
-  let arrSize' = makeInt32Operand arrSize
-      idx' = makeInt32Operand idx
-      accessLine' = makeInt32Operand accessLine
-      accessCol' = makeInt32Operand accessCol
-      allocatedLine' = makeInt32Operand allocatedLine
-   in do
-     accessFileName' <- LLVM.globalStringPtr accessFileName (AST.Name "FILE_NAME")
-     varName' <- LLVM.globalStringPtr varName (AST.Name "VAR_NAME")
-     pure $ AST.Do
-       AST.Call {
-        tailCallKind = Nothing,
-        AST.callingConvention = AST.C,
-        AST.returnAttributes = [],
-        AST.type' = voidRetTyp,
-        AST.function = Right (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_boundAssertion"))),
-        AST.arguments = [
-          (arrSize', []), (idx', []), (accessLine', []), (accessCol', []),
-          (AST.ConstantOperand accessFileName', []),
-          (AST.ConstantOperand varName', []), (allocatedLine', [])
-        ],
-        AST.functionAttributes = [],
-        AST.metadata = []
-      }
-
-defBoundChecker :: IRBuilderT Env AST.Operand
-defBoundChecker = mdo
-  let arrSize = (AST.i32, LLVM.ParameterName "arrSize")
-      idx = (AST.i32, LLVM.ParameterName "idx")
-      line = (AST.i32, LLVM.ParameterName "line")
-      col = (AST.i32, LLVM.ParameterName "col")
-      fileName = (AST.ptr, LLVM.ParameterName "fileName")
-      varName = (AST.ptr, LLVM.ParameterName "varName")
-      allocatedLine = (AST.ptr, LLVM.ParameterName "allocatedLine")
-
-  LLVM.function "LEC_boundAssertion" [arrSize, idx, line, col, fileName, varName, allocatedLine] AST.void body
-    where
-      body [arrSize', idx', line', col', fileName', varName', allocatedLine'] =  mdo
-        outOfBoundAccess <- LLVM.icmp AST.SGT idx' arrSize'
-        LLVM.condBr outOfBoundAccess panic ret
-        panic <- LLVM.block `LLVM.named` "panic"
-        _ <- LLVM.call voidRetTyp libcPrintf [
-          -- TODO: Make `OUT_OF_BOUND_ASSERT_FMT` as global constant
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "OUT_OF_BOUND_ASSERT_FMT")), []),
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName fileName'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName line'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName col'), []),
-          (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk")), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName arrSize'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName idx'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName varName'), []),
-          (AST.LocalReference AST.ptr (getLocalOperandName allocatedLine'), [])]
-        _ <- LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
-        ret <- LLVM.block `LLVM.named` "ret"
-        pure ()

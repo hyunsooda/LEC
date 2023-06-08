@@ -9,6 +9,7 @@ import Type
 import CFG
 import Backend
 import Metadata
+import Emit
 
 import System.Demangle.Pure (demangle)
 import System.Console.ANSI
