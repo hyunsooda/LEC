@@ -18,7 +18,6 @@ import Emit
 
 import System.Demangle.Pure (demangle)
 import Data.ByteString.Short (ShortByteString)
-import Data.List (isPrefixOf, isInfixOf, sort)
 import Data.Word (Word16, Word32)
 import Data.Maybe (isJust, fromJust)
 import qualified Data.Map as M
@@ -31,6 +30,7 @@ import qualified LLVM.AST.IntegerPredicate as AST
 import qualified LLVM.AST.Global as AST
 import qualified LLVM.AST.Operand as AST hiding (PointerType)
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.ParameterAttribute as PA (ParameterAttribute)
 
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
@@ -93,35 +93,27 @@ installAssertI ctxName acc instr@(_ AST.:= AST.GetElementPtr {..}) = do
 
 -- TODO: Consider this handler. It would be handled when global `std::map` variable is used
 installAssertI ctxName acc instr@(_ AST.:= AST.Call {..}) = do
-  when (isMapAccess demangled) $
-    case fnName of
-      Just fnName' -> do
-        ni <- nextInstr
-        case ni of
-          Just ni' ->
-            when (not . isStoreInstr $ ni') $ do
-              traceM $ "Test me : " ++ demangled
-          _ -> pure ()
-      _ -> pure ()
-  pure $ acc ++ [instr]
-    where
-      fnName = getFuncName function
-      demangled = getDemangledFuncName function
-      isMapAccess fnName =
-        "std::map<" `isPrefixOf` fnName && "::operator[]" `isInfixOf` fnName
-      isStoreInstr (AST.Do AST.Store {}) = True
-      isStoreInstr _ = False
-      nextInstr = do
-        nextInstrs <- getNextInstr ctxName $ iwrap instr
-        if not . null $ nextInstrs
-           then pure . Just . wrapi . head $ nextInstrs
-           else pure Nothing
-
+  installable <- installUMAChecker ctxName function (iwrap instr) arguments metadata
+  case installable of
+    Just checkerCall -> pure $ acc ++ [checkerCall, instr]
+    Nothing -> pure $ acc ++ [instr]
 installAssertI _ acc instr = pure $ acc ++ [instr]
 
 installAssertT :: (MonadIO m, MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
   AST.Name -> (AST.Named AST.Terminator) -> m (Maybe (AST.Named AST.Instruction))
 installAssertT ctxName term@(varName AST.:= AST.Invoke { function' = func, .. }) = do
+  installUMAChecker ctxName func (twrap term) arguments' metadata'
+installAssertT _ _ = pure Nothing
+
+installUMAChecker ::
+  (MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
+    AST.Name ->
+    AST.CallableOperand ->
+    InstructionWrap ->
+    [(AST.Operand, [PA.ParameterAttribute])] ->
+    AST.InstructionMetadata ->
+    m (Maybe (AST.Named AST.Instruction))
+installUMAChecker ctxName func wInstr arguments metadata =
   if (isMapAccess demangled) then
     case fnNm of
       Just _ -> do
@@ -129,38 +121,27 @@ installAssertT ctxName term@(varName AST.:= AST.Invoke { function' = func, .. })
         case ni of
           Just ni' ->
             if (not . isStoreInstr $ ni') then do
-              let (mapObj, key) = getArgs arguments'
-              mapUninitCall <- callMapUninitChecker mapObj key metadata'
+              let (mapObj, key) = getArgs arguments
+              mapUninitCall <- callMapUninitChecker mapObj key metadata
               pure . Just $ mapUninitCall
             else
-              pure Nothing
-          _ -> pure Nothing
-      Nothing -> pure Nothing
+              ret
+          _ -> ret
+      Nothing -> ret
   else
-    pure Nothing
-
+    ret
   where
+    ret = pure Nothing
     fnNm = getFuncName func
     demangled = getDemangledFuncName func
 
-    isMapAccess fnNm =
-      "std::map<" `isPrefixOf` fnNm && "::operator[]" `isInfixOf` fnNm
-    isMapCount fnNm =
-      "std::map<" `isPrefixOf` fnNm && "::count(" `isInfixOf` fnNm
-    isMapOperation fnNm = "std::map<" `isPrefixOf` fnNm
-
-    isStoreInstr (AST.Do AST.Store {}) = True
-    isStoreInstr _ = False
-
     nextInstr = do
-      nextInstrs <- getNextInstr ctxName $ twrap term
+      nextInstrs <- getNextInstr ctxName $ wInstr
       if not . null $ nextInstrs
-         then pure . Just . wrapi . head $ nextInstrs
-         else pure Nothing
+        then pure . Just . wrapi . head $ nextInstrs
+        else pure Nothing
 
     getArgs [(arg1, _), (arg2, _)] = (arg1, arg2)
-
-installAssertT _ _ = pure Nothing
 
 updateIntMap :: MonadState StateMap m => AST.Global -> m ()
 updateIntMap f = do

@@ -8,6 +8,7 @@ import Metadata
 
 import Control.Monad.State hiding (void)
 import qualified Data.Map as M
+import Data.List (isPrefixOf, isInfixOf)
 import Data.Text.Lazy (unpack)
 
 import qualified LLVM.AST as AST
@@ -68,4 +69,10 @@ getIntValue e@(AST.LocalReference _ name) = do
     Just size -> pure size
     _ -> panic "ERR1" e
 
+isStoreInstr :: AST.Named AST.Instruction -> Bool
+isStoreInstr (AST.Do AST.Store {}) = True
+isStoreInstr _ = False
 
+isMapAccess :: String -> Bool
+isMapAccess fnNm =
+  "std::map<" `isPrefixOf` fnNm && "::operator[]" `isInfixOf` fnNm
