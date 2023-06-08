@@ -13,6 +13,7 @@ import Type
 import CFG
 import Metadata
 import Util
+import OpUtil
 import Emit
 
 import System.Demangle.Pure (demangle)
@@ -20,7 +21,6 @@ import Data.ByteString.Short (ShortByteString)
 import Data.List (isPrefixOf, isInfixOf, sort)
 import Data.Word (Word16, Word32)
 import Data.Maybe (isJust, fromJust)
-import Data.Text.Lazy (unpack)
 import qualified Data.Map as M
 import Control.Monad.State hiding (void)
 
@@ -36,34 +36,7 @@ import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
 import LLVM.IRBuilder.Instruction as LLVM
 
-import Prettyprinter hiding (line, line', column)
-import LLVM.Pretty
 import Debug.Trace
-
-panic :: (Monad m, Pretty a) => String -> a -> m b
-panic errStr expr = do
-  traceM $ unpack $ ppll expr
-  error errStr
-
-constantToInt :: AST.Operand -> Integer
-constantToInt (AST.ConstantOperand (C.Int {..})) = integerValue
-constantToInt (AST.ConstantOperand (C.Null {})) = 0
-
-getIntValue :: MonadState StateMap m => AST.Operand -> m Integer
-getIntValue c@(AST.ConstantOperand _) = pure $ constantToInt c
-
-getIntValue e@(AST.LocalReference _ name) = do
-  memAllocPtrs <- gets intMap
-  case M.lookup name memAllocPtrs of
-    Just size -> pure size
-    _ -> panic "ERR1" e
-
-typeSize :: AST.Type -> Either String Int
-typeSize typ = case typ of
-  AST.IntegerType {..} -> Right $ fromIntegral typeBits
-  -- TODO: Consider multiple dimension
-  AST.ArrayType   {..} -> typeSize elementType
-  _ -> Left $ "Unimplemented type: " ++ show typ
 
 updateIntVal :: MonadState StateMap m => AST.Name -> Integer -> m ()
 updateIntVal varName val = modify $ \sm -> sm { intMap   = M.insert varName val (intMap sm) }
@@ -89,27 +62,6 @@ updateTaintList sourceVarName varName = do
 
 getGlobalFuncOp :: AST.Name -> AST.Operand
 getGlobalFuncOp nm = AST.ConstantOperand (C.GlobalReference nm)
-
-isNotDebugInstr :: AST.Named AST.Instruction -> Bool
-isNotDebugInstr (AST.Do AST.Call{..}) =
-  case getFuncName function of
-    Just name ->
-      if name == "llvm.dbg.declare" then False else True
-    _ -> True
-isNotDebugInstr _ = True
-
-filterDebugInfo :: MonadState StateMap m => AST.Named AST.Instruction -> m Bool
-filterDebugInfo instr@(AST.Do AST.Call{function = func, arguments}) = do
-  if (not . isNotDebugInstr $ instr) then
-    let (varMD, sourceMapMD) = (head arguments, arguments !! 1)
-        varName = getVarName varMD
-      in do
-     varInfo <- getVarInfo sourceMapMD
-     addVarInfo varName varInfo
-     pure False
-  else
-    pure True
-filterDebugInfo _ = pure True
 
 installAssertI ::
   (MonadIO m, MonadState StateMap m, MonadIRBuilder m, MonadModuleBuilder m) =>
