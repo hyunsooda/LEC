@@ -209,6 +209,10 @@ getMDFuncFileNames (AST.DINode (AST.DIScope (AST.DILocalScope (AST.DISubprogram 
   pure (fileName', funcName)
     where funcName = show name
 
+getMDFuncFileNames (AST.DINode (AST.DIScope (AST.DILocalScope (AST.DILexicalBlockBase (AST.DILexicalBlock {..}))))) = do
+  fileName' <- getFileName file
+  pure (fileName', "")
+
 getMDScope :: (MonadState StateMap m) => [(a1, AST.MDRef a2)] -> m (String, String, Integer, Integer)
 getMDScope [(_, AST.MDRef id)] = do
   md <- gets debugMap
