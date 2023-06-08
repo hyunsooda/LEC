@@ -1,0 +1,2 @@
+B[31mFound unitialized key access: ["branch-strmap.cpp":13:24]B[37m
+    variable name: "thisismymap", allocated at: 7
