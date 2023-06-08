@@ -9,8 +9,11 @@ import Type
 import Metadata
 import Util
 import Global
+import OpUtil
 
+import System.Demangle.Pure (demangle)
 import Data.Maybe (isJust, fromJust)
+import Data.List (isInfixOf, findIndex)
 import Control.Monad.State hiding (void)
 
 import qualified LLVM.AST as AST
@@ -18,6 +21,7 @@ import qualified LLVM.AST.Type as AST
 import qualified LLVM.AST.CallingConvention as AST
 import qualified LLVM.AST.IntegerPredicate as AST
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.Global as G
 
 import LLVM.IRBuilder.Monad as LLVM
 import LLVM.IRBuilder.Module as LLVM
@@ -146,6 +150,80 @@ callBoundAssert arrSize idx targetAddrName metadata = do
         AST.metadata = []
       }
 
+defUMAChecker :: AST.Global -> IRBuilderT Env AST.Definition
+defUMAChecker f@(AST.Function { .. }) = do
+  let bbIdx = fromJust . findBBIdxEMplaceHintUniq $ basicBlocks
+      panicBB = replaceBB2Panic (basicBlocks !! bbIdx)
+      bbs = map filterDbgInstr basicBlocks
+      (bbs1, _:bbs2) = splitAt bbIdx bbs
+      newBBs = bbs1 ++ [panicBB] ++ bbs2
+      newFn = AST.GlobalDefinition $ f {
+        G.name = AST.mkName "LEC_uninitMapAccessChecker"
+      , G.parameters = ([
+          (fst parameters) !! 0
+        , (fst parameters) !! 1
+        , AST.Parameter AST.ptr (AST.mkName "line") []
+        , AST.Parameter AST.ptr (AST.mkName "col") []
+        , AST.Parameter AST.ptr (AST.mkName "fileName") []
+        , AST.Parameter AST.ptr (AST.mkName "varName") []
+        , AST.Parameter AST.ptr (AST.mkName "keyName") []
+        ], False)
+      , G.basicBlocks = newBBs
+      , G.metadata = []
+      }
+   in
+   pure newFn
+     where
+      findBBIdxEMplaceHintUniq bbs = find bbs 0 Nothing
+      find ((AST.BasicBlock name instrs term) : residual) idx Nothing =
+        case findIndex aux instrs of
+          Just _ -> Just idx
+          _ -> find residual (idx + 1) Nothing
+
+      aux (_ AST.:= AST.Call {..}) =
+        let fnNm = fromJust . getFuncName $ function
+            demangled = fromJust . demangle $ fnNm
+         in
+        "_M_emplace_hint_unique" `isInfixOf` demangled
+      aux _ = False
+
+      replaceBB2Panic (AST.BasicBlock name _ _) =
+        AST.BasicBlock name [reportCall, exitCall] term
+        where
+          reportCall = AST.Do AST.Call {
+            AST.tailCallKind = Nothing
+          , AST.callingConvention = AST.C
+          , AST.returnAttributes = []
+          , AST.type' = voidRetTyp
+          , AST.function = Right libcPrintf
+          , AST.arguments =
+            [ (AST.ConstantOperand (C.GlobalReference (AST.Name "MAP_UNINIT_ACCESS_ASSERT_FMT")), [])
+            , (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_RED_g767akzwihq04k3frbvijvx2l5gdn0sk")), [])
+            , (AST.LocalReference AST.ptr (AST.mkName "fileName"), [])
+            , (AST.LocalReference AST.ptr (AST.mkName "line"), [])
+            , (AST.LocalReference AST.ptr (AST.mkName "col"), [])
+            , (AST.ConstantOperand (C.GlobalReference (AST.Name "LEC_ANSI_WHITE_g767akzwihq04k3frbvijvx2l5gdn0sk")), [])
+            , (AST.LocalReference AST.ptr (AST.mkName "varName"), [])
+            , (AST.LocalReference AST.ptr (AST.mkName "keyName"), [])
+            ]
+          , AST.functionAttributes = []
+          , AST.metadata = []
+          }
+          exitCall = AST.Do AST.Call {
+            AST.tailCallKind = Nothing
+          , AST.callingConvention = AST.C
+          , AST.returnAttributes = []
+          , AST.type' = voidRetTyp
+          , AST.function = Right libcExit
+          , AST.arguments = [(makeInt32Operand 1, [])]
+          , AST.functionAttributes = []
+          , AST.metadata = []
+          }
+          term = AST.Do AST.Ret {
+            AST.returnOperand = Just $ AST.ConstantOperand (C.Null AST.ptr)
+          , AST.metadata' = []
+          }
+
 defBoundChecker :: IRBuilderT Env AST.Operand
 defBoundChecker = mdo
   LLVM.function oobCheckerFnNm [arrSize, idx, line, col, fileName, varName, allocatedLine] AST.void body
@@ -176,3 +254,4 @@ defBoundChecker = mdo
         _ <- LLVM.call voidRetTyp libcExit [(makeInt32Operand 1, [])]
         ret <- LLVM.block `LLVM.named` "ret"
         pure ()
+
