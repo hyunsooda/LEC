@@ -9,7 +9,7 @@ import Type
 import Metadata
 import Util
 import Global
-import OpUtil
+import Operand
 
 import System.Demangle.Pure (demangle)
 import Data.Maybe (isJust, fromJust)

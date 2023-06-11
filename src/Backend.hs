@@ -13,7 +13,7 @@ import Type
 import CFG
 import Metadata
 import Util
-import OpUtil
+import Operand
 import Emit
 
 import System.Demangle.Pure (demangle)
