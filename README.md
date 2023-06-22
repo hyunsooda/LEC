@@ -13,7 +13,7 @@ This project draws inspiration from Golang and Rust, which offer similar securit
 1. Features
     - TBD
 2. Performance
-    - Address Sanitizer (ASAN) inspects violations at runtime, while LEC builds its behavior at compile time with machine code. Therefore, LEC is much faster than ASAN.
+    - Address Sanitizer (ASAN) inspects violations at runtime and it is known consuming large resource (CPU and memory), while LEC builds its behavior at compile time with machine code. Therefore, LEC is much faster than ASAN.
 3. Report Quality
     - Error localization with ASAN is extremely hard to figure out, whereas LEC provides another level of localization quality that assists developers in easily identifying them. Having explainable reporting is not only an important requirement but also crucial in finding bugs.
 
